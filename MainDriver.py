@@ -10,6 +10,7 @@ shared_imu_data = multiprocessing.Array(ctypes.c_double, 11)  # Array for Q_w, Q
 
 # Shared values for landing detection and survivability
 landing_detected = multiprocessing.Value(ctypes.c_bool, False)  # Boolean for landing detection
+landing_detection_time = multiprocessing.Value(ctypes.c_double, 0.0)  # Time of landing detection
 survivability_percentage = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for survivability percentage
 
 # Threshold values
@@ -54,7 +55,7 @@ def imu_data_process(imu, shared_data):
 
 
 # TO-DO: Add timeout timer and photoresistor
-def landing_detection_process(shared_data, landing_detected):
+def landing_detection_process(shared_data, landing_detected, landing_detection_time):
     """
     Process function to monitor IMU data for landing detection condition.
     Sets landing_detected to True based on altitude and acceleration thresholds.
@@ -78,6 +79,9 @@ def landing_detection_process(shared_data, landing_detected):
         if initialAltitudeAchieved.value and altitude < landingAltitudeThreshold and accel_magnitude > landingAccMagThreshold:
             landedState.value = True
             landing_detected.value = True
+
+            # Record the system time of landing detection
+            landing_detection_time.value = time.time()
 
             # Publish landing detected message
             socket.send_string("Landing Detected")
@@ -103,7 +107,7 @@ if __name__ == "__main__":
     imu_process.start()
 
     # Start the landing detection process
-    landing_process = multiprocessing.Process(target=landing_detection_process, args=(shared_imu_data, landing_detected))
+    landing_process = multiprocessing.Process(target=landing_detection_process, args=(shared_imu_data, landing_detected, landing_detection_time))
     landing_process.start()
 
     # Start the survivability process
@@ -113,7 +117,8 @@ if __name__ == "__main__":
     try:
         # Keep the main process alive and print altitude, acceleration magnitude, and landing detected periodically for debugging
         while True:
-            print(f"Altitude: {shared_imu_data[9]:.2f} m, Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, Landing Detected: {landing_detected.value}")
+            detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
+            print(f"Altitude: {shared_imu_data[9]:.2f} m, Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, Landing Detected: {landing_detected.value}, Detection Time: {detection_time}")
 
     except KeyboardInterrupt:
         print("Stopping processes...")
