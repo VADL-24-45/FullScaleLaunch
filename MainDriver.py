@@ -4,20 +4,30 @@ import time
 import math
 import zmq
 from VN100 import VN100IMU, IMUData  # Assuming VN100IMU class and IMUData dataclass are available
+from RF import I2CSender
+
+# Threshold values
+landingAccMagThreshold = 15  # m/s^2
+groundLevel = 90.39  # CHANGE THIS VALUE TO CALIBRATE IMU
+landingAltitudeThreshold = groundLevel + 100
+initialAltitudeThreshold = groundLevel + 0
 
 # Shared data structure for IMU data (using Array for faster access)
 shared_imu_data = multiprocessing.Array(ctypes.c_double, 11)  # Array for Q_w, Q_x, Q_y, Q_z, a_x, a_y, a_z, temperature, pressure, altitude, accel_magnitude
+shared_rf_data = multiprocessing.Array(ctypes.c_double, 13) # temperature, apogee, battry_percentage, survivability_percentage, Q_w, Q_x, Q_y, Q_z, detection_time_H, detection_time_M, detection_time_S, max_velocity, landing_velocity
 
 # Shared values for landing detection and survivability
 landing_detected = multiprocessing.Value(ctypes.c_bool, False)  # Boolean for landing detection
 landing_detection_time = multiprocessing.Value(ctypes.c_double, 0.0)  # Time of landing detection
 survivability_percentage = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for survivability percentage
 
-# Threshold values
-landingAccMagThreshold = 15  # m/s^2
-groundLevel = 159.32  # CHANGE THIS VALUE TO CALIBRATE IMU
-landingAltitudeThreshold = groundLevel + 100
-initialAltitudeThreshold = groundLevel + 0
+# Shared values for velocity
+max_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for max velocity
+landing_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for landing velocity
+velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for current velocity
+
+apogee_reached = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for apogee
+battry_percentage = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for battry percentage
 
 # State flags
 ledState = multiprocessing.Value(ctypes.c_bool, False)  # LED state flag
@@ -48,6 +58,10 @@ def imu_data_process(imu, shared_data):
             seaLevelPressure = 101.325  # Standard atmospheric pressure at sea level in hPa
             altitude = 44330.0 * (1.0 - math.pow(shared_data[8] / seaLevelPressure, 0.1903))
             shared_data[9] = altitude
+
+            # Update apogee if the current altitude is higher than the recorded apogee
+            if altitude > apogee_reached.value:
+                apogee_reached.value = altitude
 
             # Calculate acceleration magnitude and update shared data
             accel_magnitude = math.sqrt(shared_data[4] ** 2 + shared_data[5] ** 2 + shared_data[6] ** 2)
@@ -97,6 +111,52 @@ def survivability_process(shared_data, survivability_percentage):
         accel_magnitude = shared_data[10]
         survivability_percentage.value = max(0, 100 - (accel_magnitude / 20) * 100)  # TO-DO: Placeholder logic for survivability
 
+def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_time, shared_rf_data, apogee_reached, battry_percentage, survivability_percentage, max_velocity, landing_velocity):
+    """
+    Process function to update shared_rf_data continuously until landing is detected.
+    """
+    landed_time_set = False  # Flag to ensure landing time is only set once
+
+    while True:
+        if not landing_detected.value:
+            # Update RF data based on shared IMU data and other shared values
+            shared_rf_data[0] = shared_imu_data[7]  # Temperature from IMU data
+            shared_rf_data[1] = apogee_reached.value  # Apogee reached
+            shared_rf_data[2] = battry_percentage.value  # Battery percentage
+            shared_rf_data[3] = survivability_percentage.value  # Survivability percentage
+
+            # Update velocity data
+            shared_rf_data[11] = max_velocity.value  # Max velocity
+            shared_rf_data[12] = landing_velocity.value  # Landing velocity
+        
+        # Set landing time only once after landing is detected
+        if landing_detected.value and not landed_time_set:
+            detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value))
+            hours, minutes, seconds = map(int, detection_time.split(':'))
+            shared_rf_data[8] = hours  # Detection time hours
+            shared_rf_data[9] = minutes  # Detection time minutes
+            shared_rf_data[10] = seconds  # Detection time seconds
+            landed_time_set = True
+
+
+        # Quarternion need to always be updated
+        shared_rf_data[4] = shared_imu_data[0]  # Q_w (quaternion w)
+        shared_rf_data[5] = shared_imu_data[1]  # Q_x (quaternion x)
+        shared_rf_data[6] = shared_imu_data[2]  # Q_y (quaternion y)
+        shared_rf_data[7] = shared_imu_data[3]  # Q_z (quaternion z)
+
+def send_rf_data_process(shared_rf_data, landing_detected):
+    """
+    Process function to send RF data when landing is detected.
+    """
+    sender = I2CSender()
+    while True:
+        if landing_detected.value:
+            sender.set_active(True)
+            rf_data = [float(value) for value in shared_rf_data]  # Convert shared_rf_data to a list of floats
+            sender.monitor_and_send(rf_data)
+            time.sleep(0.5)
+
 # Main program
 if __name__ == "__main__":
     # Initialize the IMU
@@ -114,18 +174,37 @@ if __name__ == "__main__":
     survivability_process = multiprocessing.Process(target=survivability_process, args=(shared_imu_data, survivability_percentage))
     survivability_process.start()
 
+    # Start the RF data update process
+    rf_data_process = multiprocessing.Process(target=update_rf_data_process, args=(
+        shared_imu_data, landing_detected, landing_detection_time, shared_rf_data,
+        apogee_reached, battry_percentage, survivability_percentage, max_velocity, landing_velocity
+    ))
+    rf_data_process.start()
+
+
+    # Start the RF data sending process
+    send_rf_data_process = multiprocessing.Process(target=send_rf_data_process, args=(
+        shared_rf_data, landing_detected
+    ))
+    send_rf_data_process.start()
+
+
     try:
         # Keep the main process alive and print altitude, acceleration magnitude, and landing detected periodically for debugging
         while True:
-            detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
-            print(f"Altitude: {shared_imu_data[9]:.2f} m, Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, Landing Detected: {landing_detected.value}, Detection Time: {detection_time}")
+            # detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
+            # print(f"Altitude: {shared_imu_data[9]:.2f} m, Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, Landing Detected: {landing_detected.value}, Detection Time: {detection_time}")
+            print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
+  
 
     except KeyboardInterrupt:
         print("Stopping processes...")
         imu_process.terminate()
         landing_process.terminate()
         survivability_process.terminate()
+        rf_data_process.terminate()
         imu_process.join()
         landing_process.join()
         survivability_process.join()
+        rf_data_process.join()
         print("Processes stopped.")
