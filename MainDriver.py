@@ -5,12 +5,16 @@ import math
 import zmq
 from VN100 import VN100IMU, IMUData  # Assuming VN100IMU class and IMUData dataclass are available
 from RF import I2CSender
+import lgpio
 
 # Threshold values
 landingAccMagThreshold = 15  # m/s^2
 groundLevel = 90.39  # CHANGE THIS VALUE TO CALIBRATE IMU
 landingAltitudeThreshold = groundLevel + 100
 initialAltitudeThreshold = groundLevel + 0
+
+# RF ENABLE
+global rf_ENABLE
 
 # Shared data structure for IMU data (using Array for faster access)
 shared_imu_data = multiprocessing.Array(ctypes.c_double, 11)  # Array for Q_w, Q_x, Q_y, Q_z, a_x, a_y, a_z, temperature, pressure, altitude, accel_magnitude
@@ -152,15 +156,42 @@ def send_rf_data_process(shared_rf_data, landing_detected):
     sender = I2CSender()
     while True:
         if landing_detected.value:
+            lgpio.gpio_write(rf_ENABLE, 17, 1)
             sender.set_active(True)
             rf_data = [float(value) for value in shared_rf_data]  # Convert shared_rf_data to a list of floats
             sender.monitor_and_send(rf_data)
             time.sleep(0.5)
 
+def release_latch_servo(landing_detected):
+    """
+    Process function to release the latch and servo when landing is detected.
+    """
+    while True:
+        if landing_detected.value:
+            # Release Latch and Servo Here
+            print("Releasing Latch and Servo...")  # Placeholder for actual latch release logic
+            break  # Stop the process after releasing the latch and servo
+        
+        # Add a small delay to prevent excessive CPU usage
+        time.sleep(0.1)
+
+
 # Main program
 if __name__ == "__main__":
     # Initialize the IMU
     imu = VN100IMU()
+
+    # Initialize GPIO
+    rf_ENABLE = lgpio.gpiochip_open(0)  # Open GPIO chip 0
+    try:
+        lgpio.gpio_claim_output(rf_ENABLE, 17)  # Set GPIO 17 as output
+    except lgpio.error as e:
+        if "GPIO busy" in str(e):
+            print("GPIO 17 is busy, releasing and reinitializing...")
+            lgpio.gpio_free(rf_ENABLE, 17)  # Free GPIO 17 if busy
+            lgpio.gpio_claim_output(rf_ENABLE, 17)  # Set GPIO 17 as output again
+
+    lgpio.gpio_write(rf_ENABLE, 17, 0)  # Set GPIO 17 to low, DISABLE RF
 
     # Start the IMU data process
     imu_process = multiprocessing.Process(target=imu_data_process, args=(imu, shared_imu_data))
@@ -188,6 +219,9 @@ if __name__ == "__main__":
     ))
     send_rf_data_process.start()
 
+    # Start the Servo Latch process
+    release_latch_servo_process = multiprocessing.Process(target=release_latch_servo, args=(landing_detected,))
+    release_latch_servo_process.start()
 
     try:
         # Keep the main process alive and print altitude, acceleration magnitude, and landing detected periodically for debugging
@@ -203,8 +237,13 @@ if __name__ == "__main__":
         landing_process.terminate()
         survivability_process.terminate()
         rf_data_process.terminate()
+        send_rf_data_process.terminate()
+        release_latch_servo_process.terminate()
         imu_process.join()
         landing_process.join()
         survivability_process.join()
         rf_data_process.join()
+        send_rf_data_process.join()
         print("Processes stopped.")
+        lgpio.gpiochip_close(rf_ENABLE)
+        print("GPIO cleanup and program terminated.")
