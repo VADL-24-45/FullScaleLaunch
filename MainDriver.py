@@ -245,5 +245,6 @@ if __name__ == "__main__":
         rf_data_process.join()
         send_rf_data_process.join()
         print("Processes stopped.")
+        lgpio.gpio_write(rf_ENABLE, 17, 0)
         lgpio.gpiochip_close(rf_ENABLE)
         print("GPIO cleanup and program terminated.")
