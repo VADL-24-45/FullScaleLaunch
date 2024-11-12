@@ -3,13 +3,13 @@ import ctypes
 import time
 import math
 import zmq
-from VN100 import VN100IMU, IMUData  
+from VN100 import VN100IMU, IMUData  # Assuming VN100IMU class and IMUData dataclass are available
 from RF import I2CSender
 from ServoLatch import ServoController
 import lgpio
 
 # Threshold values
-landingAccMagThreshold = 15  # m/s^2
+landingAccMagThreshold = 20  # m/s^2
 groundLevel = 90.39  # CHANGE THIS VALUE TO CALIBRATE IMU
 landingAltitudeThreshold = groundLevel + 100
 initialAltitudeThreshold = groundLevel + 0
@@ -217,6 +217,7 @@ def release_latch_servo(servo, landing_detected):
     while True:
         if landing_detected.value:
             servo.set_servo_angle(servoEndAngle)
+            lgpio.gpio_write(GPIO_ENABLE, 19, 0)
             break  # Stop the process after releasing the latch and servo
 
 def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apogee_reached, landedState, initialAltitudeAchieved):
@@ -265,7 +266,7 @@ if __name__ == "__main__":
             lgpio.gpio_claim_output(GPIO_ENABLE, 19)  # Set GPIO 17 as output again
 
     lgpio.gpio_write(GPIO_ENABLE, 17, 0)  # Set GPIO 17 to low, DISABLE RF
-    lgpio.gpio_write(GPIO_ENABLE, 19, 0)  # Set GPIO 17 to low, DISABLE RF
+    lgpio.gpio_write(GPIO_ENABLE, 19, 0)  # Set GPIO 19 to low, DISABLE LATCH
 
     # Initialize Servo
     servo = ServoController(servo_pin=13)
