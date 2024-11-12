@@ -217,7 +217,7 @@ def release_latch_servo(servo, landing_detected):
     while True:
         if landing_detected.value:
             servo.set_servo_angle(servoEndAngle)
-            lgpio.gpio_write(GPIO_ENABLE, 19, 0)
+            lgpio.gpio_write(GPIO_ENABLE, 19, 1)
             break  # Stop the process after releasing the latch and servo
 
 def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apogee_reached, landedState, initialAltitudeAchieved):
