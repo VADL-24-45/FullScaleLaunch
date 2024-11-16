@@ -18,8 +18,9 @@ initialAltitudeThreshold = groundLevel + 0
 tOffset = -6
 
 # Servo Angle
-servoStartAngle = 0
-servoEndAngle = 180
+# servoStartAngle = 0
+servoEndAngle = 275
+
 
 # RF ENABLE
 global GPIO_ENABLE
@@ -270,7 +271,7 @@ if __name__ == "__main__":
 
     # Initialize Servo
     servo = ServoController(servo_pin=13)
-    servo.set_servo_angle(servoStartAngle)
+    #servo.set_servo_angle(servoStartAngle)
 
     # Start the IMU data process
     imu_process = multiprocessing.Process(target=imu_data_process, args=(imu, shared_imu_data))
@@ -314,6 +315,7 @@ if __name__ == "__main__":
             # detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
             # print(f"Altitude: {shared_imu_data[9]:.2f} m, Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, Landing Detected: {landing_detected.value}, Detection Time: {detection_time}")
             print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
+            # print(f"Pressure: {shared_imu_data[8]:.2f}, Pressure: {shared_imu_data[9]:.2f}")
             # print(survivability_percentage.value)
 
     except KeyboardInterrupt:
@@ -325,7 +327,7 @@ if __name__ == "__main__":
         send_rf_data_process.terminate()
         release_latch_servo_process.terminate()
         data_logging_process.terminate()
-        imu_process.join()
+        imu_process.join()       
         landing_process.join()
         survivability_process.join()
         rf_data_process.join()
@@ -335,6 +337,6 @@ if __name__ == "__main__":
         lgpio.gpio_write(GPIO_ENABLE, 17, 0)
         lgpio.gpio_write(GPIO_ENABLE, 19, 0)
         lgpio.gpiochip_close(GPIO_ENABLE)
-        servo.set_servo_angle(servoStartAngle)
+        #servo.set_servo_angle(servoStartAngle)
         servo.release()
         print("GPIO cleanup and program terminated.")
