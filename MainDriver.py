@@ -3,22 +3,32 @@ import ctypes
 import time
 import math
 import zmq
+import numpy as np
 from VN100 import VN100IMU, IMUData  # Assuming VN100IMU class and IMUData dataclass are available
 from RF import I2CSender
 from ServoLatch import ServoController
 import lgpio
 
-# Threshold values
-landingAccMagThreshold = 20  # m/s^2
-groundLevel = 90.39  # CHANGE THIS VALUE TO CALIBRATE IMU
-landingAltitudeThreshold = groundLevel + 100
-initialAltitudeThreshold = groundLevel + 0
+# Threshold values (Flight Use)
+# landingAccMagThreshold = 30  # m/s^2
+# groundLevel = 131.61 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+# landingAltitudeThreshold = groundLevel + 20
+# initialAltitudeThreshold = groundLevel + 30
+
+# Test Use
+landingAccMagThreshold = 5  # m/s^2
+groundLevel = 89.26  # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+landingAltitudeThreshold = groundLevel + 10
+initialAltitudeThreshold = groundLevel - 10
+
+# Timeout tracking variables
+timeout_length = 10
 
 # Temperature Offser
 tOffset = -6
 
 # Servo Angle
-# servoStartAngle = 0
+servoStartAngle = 0
 servoEndAngle = 275
 
 
@@ -33,6 +43,8 @@ shared_rf_data = multiprocessing.Array(ctypes.c_double, 13) # temperature, apoge
 landing_detected = multiprocessing.Value(ctypes.c_bool, False)  # Boolean for landing detection
 landing_detection_time = multiprocessing.Value(ctypes.c_double, 0.0)  # Time of landing detection
 survivability_percentage = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for survivability percentage
+current_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  
+landing_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  
 
 # Shared values for velocity
 max_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for max velocity
@@ -89,9 +101,11 @@ def landing_detection_process(shared_data, landing_detected, landing_detection_t
     Publishes this condition over ZMQ socket.
     """
     # Set up ZMQ publisher
-    context = zmq.Context()
-    socket = context.socket(zmq.PUB)
-    socket.bind("tcp://*:5556")
+    # context = zmq.Context()
+    # socket = context.socket(zmq.PUB)
+    # socket.bind("tcp://*:5556")
+    timer_set = False
+    landed_time_set = False
 
     while True:
         # Use calculated altitude and acceleration magnitude from shared data
@@ -108,10 +122,30 @@ def landing_detection_process(shared_data, landing_detected, landing_detection_t
             landing_detected.value = True
 
             # Record the system time of landing detection
-            landing_detection_time.value = time.time()
+            if not landed_time_set:
+                landing_detection_time.value = time.time()
+                landed_time_set = True
 
             # Publish landing detected message
-            socket.send_string("Landing Detected")
+            # socket.send_string("Landing Detected")
+
+        if initialAltitudeAchieved.value and altitude < landingAltitudeThreshold:
+                
+            if not timer_set:    
+                timeout_start_time = time.perf_counter()  # Start the timer 
+                timer_set = True
+
+            # print(f"{(time.perf_counter() - timeout_start_time):.2f}")
+
+            if time.perf_counter() - timeout_start_time >= timeout_length:
+                # Landing conditions are met
+                landedState.value = True
+                landing_detected.value = True
+                if not landed_time_set:
+                    landing_detection_time.value = time.time()
+                    landed_time_set = True
+                # socket.send_string("Landing Detected")
+                # print("Landing Detected!")
 
          
 def survivability_process(shared_data, survivability_percentage):
@@ -158,10 +192,18 @@ def survivability_process(shared_data, survivability_percentage):
         cur_DRI = (pow(omega, 2) / g) * X_max  # calculated DRI given X_max
         # print(cur_DRI)
 
-        survive_percentage = (max_DRI - abs(cur_DRI)) / max_DRI * 100  # converts DRI value to percentage based on max allowable DRI
+        # survive_percentage = (max_DRI - abs(cur_DRI)) / max_DRI * 100  # converts DRI value to percentage based on max allowable DRI
+        if cur_DRI <= max_DRI:
+            survivability_percentage.value = 100
+        else:
+            survivability_percentage.value = 80
+
+        if cur_DRI >= (max_DRI * 2):
+            survivability_percentage.value = 50
+
 
         # Update the shared survivability_percentage value
-        survivability_percentage.value = survive_percentage
+        # survivability_percentage.value = survive_percentage
 
 
 def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_time, shared_rf_data, apogee_reached, battry_percentage, survivability_percentage, max_velocity, landing_velocity):
@@ -218,29 +260,93 @@ def release_latch_servo(servo, landing_detected):
     while True:
         if landing_detected.value:
             servo.set_servo_angle(servoEndAngle)
-            lgpio.gpio_write(GPIO_ENABLE, 19, 1)
+            lgpio.gpio_write(GPIO_ENABLE, 19, 1) # Latch
+            lgpio.gpio_write(GPIO_ENABLE, 17, 1)
             break  # Stop the process after releasing the latch and servo
 
-def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apogee_reached, landedState, initialAltitudeAchieved):
+def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved):
     """
     Process function to log data into a text file which can later be opened with Excel.
     """
+
+    target_frequency = 100  # Hz
+    interval = 1 / target_frequency  # Seconds (10ms for 100Hz)
+    start_time = time.perf_counter()
+
+    time.sleep(3)
+
     with open("data_log.txt", "w") as f:
         # Write header to file
-        f.write("Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,temperature_2,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,apogee_reached,landedState,initialAltitudeAchieved\n")
+        f.write("Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,temperature_2,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,apogee_reached, current_velocity, landedState,initialAltitudeAchieved\n")
         while True:
-            current_time = time.strftime('%H:%M:%S', time.localtime())
-            # Format data into a string
-            data_str = (
-                f"{current_time},{shared_imu_data[0]:.2f},{shared_imu_data[1]:.2f},{shared_imu_data[2]:.2f},{shared_imu_data[3]:.2f},"
-                f"{shared_imu_data[4]:.2f},{shared_imu_data[5]:.2f},{shared_imu_data[6]:.2f},{shared_imu_data[7]:.2f},{shared_imu_data[8]:.2f},"
-                f"{shared_imu_data[9]:.2f},{shared_imu_data[10]:.2f},{shared_rf_data[0]:.2f},{shared_rf_data[1]:.2f},{shared_rf_data[2]:.2f},"
-                f"{shared_rf_data[3]:.2f},{shared_rf_data[8]:.0f},{shared_rf_data[9]:.0f},{shared_rf_data[10]:.0f},{shared_rf_data[11]:.2f},"
-                f"{shared_rf_data[12]:.2f},{apogee_reached.value:.2f},{int(landedState.value)},{int(initialAltitudeAchieved.value)}\n"
-            )
-            # Write data to file
-            f.write(data_str)
-            f.flush()  # Ensure data is written immediately
+            current_time = time.perf_counter() # Update
+
+            if current_time - start_time >= interval:
+                # Format data into a string
+                data_str = (
+                    f"{current_time:.2f},{shared_imu_data[0]:.2f},{shared_imu_data[1]:.2f},{shared_imu_data[2]:.2f},{shared_imu_data[3]:.2f},"
+                    f"{shared_imu_data[4]:.2f},{shared_imu_data[5]:.2f},{shared_imu_data[6]:.2f},{shared_imu_data[7]:.2f},{shared_imu_data[8]:.2f},"
+                    f"{shared_imu_data[9]:.2f},{shared_imu_data[10]:.2f},{shared_rf_data[0]:.2f},{shared_rf_data[1]:.2f},{shared_rf_data[2]:.2f},"
+                    f"{shared_rf_data[3]:.2f},{shared_rf_data[8]:.0f},{shared_rf_data[9]:.0f},{shared_rf_data[10]:.0f},{shared_rf_data[11]:.2f},"
+                    f"{shared_rf_data[12]:.2f},{apogee_reached.value:.2f}, {current_velocity.value:.2f}, {int(landedState.value)},{int(initialAltitudeAchieved.value)}\n"
+                )
+                # Write data to file
+                f.write(data_str)
+                f.flush()  # Ensure data is written immediately
+
+                start_time = current_time # Update time step
+
+def update_velocity_process(shared_imu_data, landing_detected):
+    # Parameters
+    target_frequency = 100  # Hz
+    interval = 1 / target_frequency  # Seconds (5.56ms for 180Hz)
+    cutoff_freq = 0.75  # Hz
+    tau = 1 / (2 * np.pi * cutoff_freq)  # Time constant
+
+    # Compute filter coefficients
+    T = interval  # Sampling interval
+    a0 = 2 / (T + 2 * tau)
+    a1 = (T - 2 * tau) / (T + 2 * tau)
+
+    window_size = 100  # Number of recent altitude readings to average
+    altitude_window = []  # List to store recent altitude readings
+
+    # Initial conditions
+    previous_altitude = 0.0
+    previous_velocity = 0.0
+    # altitude = 0
+
+    # Time tracking
+    start_time = time.perf_counter()
+
+    while True:
+        current_time = time.perf_counter()
+        if current_time - start_time >= interval:
+            # Get the current altitude from shared data
+            raw_altitude = shared_imu_data[9]  # Raw noisy altitude data
+            
+            # Add the new altitude reading to the window
+            altitude_window.append(raw_altitude)
+            if len(altitude_window) > window_size:
+                altitude_window.pop(0)  # Remove the oldest reading if the window is full
+            
+            # Calculate the filtered altitude (moving average)
+            altitude = sum(altitude_window) / len(altitude_window)
+
+            # Calculate velocity using the difference equation
+            current_velocity.value = a0 * (altitude - previous_altitude) - a1 * previous_velocity
+            print(f"Filtered Altitude: {altitude:.2f}, Velocity: {current_velocity.value:.2f}")
+
+            # Check for landing condition
+            if landing_detected:
+                landing_velocity.value = current_velocity.value  # Store landing velocity
+
+            # Update previous values
+            previous_altitude = altitude
+            previous_velocity = current_velocity.value
+
+            # Reset the time step
+            start_time = current_time
 
 
 # Main program
@@ -266,12 +372,13 @@ if __name__ == "__main__":
             lgpio.gpio_free(GPIO_ENABLE, 19)  # Free GPIO 17 if busy
             lgpio.gpio_claim_output(GPIO_ENABLE, 19)  # Set GPIO 17 as output again
 
-    lgpio.gpio_write(GPIO_ENABLE, 17, 0)  # Set GPIO 17 to low, DISABLE RF
+    lgpio.gpio_write(GPIO_ENABLE, 17
+    , 0)  # Set GPIO 17 to low, DISABLE RF
     lgpio.gpio_write(GPIO_ENABLE, 19, 0)  # Set GPIO 19 to low, DISABLE LATCH
 
     # Initialize Servo
     servo = ServoController(servo_pin=13)
-    #servo.set_servo_angle(servoStartAngle)
+    servo.set_servo_angle(servoStartAngle)
 
     # Start the IMU data process
     imu_process = multiprocessing.Process(target=imu_data_process, args=(imu, shared_imu_data))
@@ -301,7 +408,7 @@ if __name__ == "__main__":
 
     # Start the data logging process
     data_logging_process = multiprocessing.Process(target=data_logging_process, args=(
-        shared_imu_data, shared_rf_data, landing_detected, apogee_reached, landedState, initialAltitudeAchieved
+        shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved
     ))
     data_logging_process.start()
 
@@ -309,14 +416,21 @@ if __name__ == "__main__":
     release_latch_servo_process = multiprocessing.Process(target=release_latch_servo, args=(servo, landing_detected,))
     release_latch_servo_process.start()
 
+
+    update_velocity_process = multiprocessing.Process(target=update_velocity_process, args=(shared_imu_data, landing_detected,))
+    update_velocity_process.start()
+
     try:
         # Keep the main process alive and print altitude, acceleration magnitude, and landing detected periodically for debugging
         while True:
             # detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
             # print(f"Altitude: {shared_imu_data[9]:.2f} m, Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, Landing Detected: {landing_detected.value}, Detection Time: {detection_time}")
-            print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
+            # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
             # print(f"Pressure: {shared_imu_data[8]:.2f}, Pressure: {shared_imu_data[9]:.2f}")
             # print(survivability_percentage.value)
+            # print(current_velocity.value)
+            a = 1+1
+
 
     except KeyboardInterrupt:
         print("Stopping processes...")
@@ -327,16 +441,21 @@ if __name__ == "__main__":
         send_rf_data_process.terminate()
         release_latch_servo_process.terminate()
         data_logging_process.terminate()
+        update_velocity_process.terminate()
+
+
         imu_process.join()       
         landing_process.join()
         survivability_process.join()
         rf_data_process.join()
         send_rf_data_process.join()
         data_logging_process.join()
+        update_velocity_process.join()
+        
         print("Processes stopped.")
         lgpio.gpio_write(GPIO_ENABLE, 17, 0)
         lgpio.gpio_write(GPIO_ENABLE, 19, 0)
         lgpio.gpiochip_close(GPIO_ENABLE)
-        #servo.set_servo_angle(servoStartAngle)
+        servo.set_servo_angle(servoStartAngle)
         servo.release()
         print("GPIO cleanup and program terminated.")
