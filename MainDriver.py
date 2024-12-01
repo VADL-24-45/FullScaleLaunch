@@ -16,7 +16,7 @@ import lgpio
 # initialAltitudeThreshold = groundLevel + 30
 
 # Test Use
-landingAccMagThreshold = 5  # m/s^2
+landingAccMagThreshold = 1000  # m/s^2
 groundLevel = 89.26  # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
 landingAltitudeThreshold = groundLevel + 10
 initialAltitudeThreshold = groundLevel - 10
@@ -44,8 +44,6 @@ landing_detected = multiprocessing.Value(ctypes.c_bool, False)  # Boolean for la
 landing_detection_time = multiprocessing.Value(ctypes.c_double, 0.0)  # Time of landing detection
 survivability_percentage = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for survivability percentage
 current_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  
-landing_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  
-
 # Shared values for velocity
 max_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for max velocity
 landing_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for landing velocity
@@ -125,6 +123,7 @@ def landing_detection_process(shared_data, landing_detected, landing_detection_t
             if not landed_time_set:
                 landing_detection_time.value = time.time()
                 landed_time_set = True
+                landing_velocity.value = current_velocity.value
 
             # Publish landing detected message
             # socket.send_string("Landing Detected")
@@ -144,6 +143,7 @@ def landing_detection_process(shared_data, landing_detected, landing_detection_t
                 if not landed_time_set:
                     landing_detection_time.value = time.time()
                     landed_time_set = True
+                    landing_velocity.value = current_velocity.value
                 # socket.send_string("Landing Detected")
                 # print("Landing Detected!")
 
@@ -268,12 +268,12 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
     """
     Process function to log data into a text file which can later be opened with Excel.
     """
-
+    max_velocity.value = 0
     target_frequency = 100  # Hz
     interval = 1 / target_frequency  # Seconds (10ms for 100Hz)
     start_time = time.perf_counter()
 
-    time.sleep(3)
+    time.sleep(5)
 
     with open("data_log.txt", "w") as f:
         # Write header to file
@@ -293,6 +293,10 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
                 # Write data to file
                 f.write(data_str)
                 f.flush()  # Ensure data is written immediately
+
+                # Update Max Velocity
+                if abs(current_velocity.value) >= abs(max_velocity.value):
+                    max_velocity.value = current_velocity.value
 
                 start_time = current_time # Update time step
 
@@ -335,11 +339,7 @@ def update_velocity_process(shared_imu_data, landing_detected):
 
             # Calculate velocity using the difference equation
             current_velocity.value = a0 * (altitude - previous_altitude) - a1 * previous_velocity
-            print(f"Filtered Altitude: {altitude:.2f}, Velocity: {current_velocity.value:.2f}")
-
-            # Check for landing condition
-            if landing_detected:
-                landing_velocity.value = current_velocity.value  # Store landing velocity
+            print(f"Filtered Altitude: {altitude:.2f}, Velocity: {current_velocity.value:.2f}, MaxV: {max_velocity.value:.2f}, LandingV: {landing_velocity.value:.2f}")
 
             # Update previous values
             previous_altitude = altitude
