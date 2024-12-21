@@ -11,18 +11,18 @@ import lgpio
 
 # Threshold values (Flight Use)
 # landingAccMagThreshold = 30  # m/s^2
-# groundLevel = 131.61 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-# landingAltitudeThreshold = groundLevel + 20
-# initialAltitudeThreshold = groundLevel + 30
+# groundLevel = 86.44 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+# landingAltitudeThreshold = groundLevel + 50
+# initialAltitudeThreshold = groundLevel + 100
 
 # Test Use
-landingAccMagThreshold = 1000  # m/s^2
-groundLevel = 89.26  # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+landingAccMagThreshold = 5  # m/s^2
+groundLevel = 97.36  # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
 landingAltitudeThreshold = groundLevel + 10
 initialAltitudeThreshold = groundLevel - 10
 
 # Timeout tracking variables
-timeout_length = 10
+timeout_length = 20
 
 # Temperature Offser
 tOffset = -6
@@ -81,6 +81,7 @@ def imu_data_process(imu, shared_data):
             seaLevelPressure = 101.325  # Standard atmospheric pressure at sea level in hPa
             altitude = 44330.0 * (1.0 - math.pow(shared_data[8] / seaLevelPressure, 0.1903))
             shared_data[9] = altitude
+            # print(shared_data[8])
 
             # Update apogee if the current altitude is higher than the recorded apogee
             if altitude > apogee_reached.value:
@@ -245,13 +246,14 @@ def send_rf_data_process(shared_rf_data, landing_detected):
     Process function to send RF data when landing is detected.
     """
     sender = I2CSender()
+    # TO-DO: I have changed this to be active all time to avoid junk data. 
     while True:
-        if landing_detected.value:
-            lgpio.gpio_write(GPIO_ENABLE, 17, 1)
-            sender.set_active(True)
-            rf_data = [float(value) for value in shared_rf_data]  # Convert shared_rf_data to a list of floats
-            sender.monitor_and_send(rf_data)
-            time.sleep(0.5)
+        # Continuously Sending RF data
+        sender.set_active(True)
+        rf_data = [float(value) for value in shared_rf_data]  # Convert shared_rf_data to a list of floats
+        sender.monitor_and_send(rf_data)
+        time.sleep(0.5)
+
 
 def release_latch_servo(servo, landing_detected):
     """
@@ -259,9 +261,9 @@ def release_latch_servo(servo, landing_detected):
     """
     while True:
         if landing_detected.value:
-            servo.set_servo_angle(servoEndAngle)
+            servo.set_servo_angle(servoEndAngle) # Servo
             lgpio.gpio_write(GPIO_ENABLE, 19, 1) # Latch
-            lgpio.gpio_write(GPIO_ENABLE, 17, 1)
+            lgpio.gpio_write(GPIO_ENABLE, 17, 1) # RF
             break  # Stop the process after releasing the latch and servo
 
 def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved):
@@ -339,7 +341,7 @@ def update_velocity_process(shared_imu_data, landing_detected):
 
             # Calculate velocity using the difference equation
             current_velocity.value = a0 * (altitude - previous_altitude) - a1 * previous_velocity
-            print(f"Filtered Altitude: {altitude:.2f}, Velocity: {current_velocity.value:.2f}, MaxV: {max_velocity.value:.2f}, LandingV: {landing_velocity.value:.2f}")
+            # print(f"Filtered Altitude: {altitude:.2f}, Velocity: {current_velocity.value:.2f}, MaxV: {max_velocity.value:.2f}, LandingV: {landing_velocity.value:.2f}")
 
             # Update previous values
             previous_altitude = altitude
@@ -372,13 +374,12 @@ if __name__ == "__main__":
             lgpio.gpio_free(GPIO_ENABLE, 19)  # Free GPIO 17 if busy
             lgpio.gpio_claim_output(GPIO_ENABLE, 19)  # Set GPIO 17 as output again
 
-    lgpio.gpio_write(GPIO_ENABLE, 17
-    , 0)  # Set GPIO 17 to low, DISABLE RF
+    lgpio.gpio_write(GPIO_ENABLE, 17, 0)  # Set GPIO 17 to low, DISABLE RF
     lgpio.gpio_write(GPIO_ENABLE, 19, 0)  # Set GPIO 19 to low, DISABLE LATCH
 
     # Initialize Servo
     servo = ServoController(servo_pin=13)
-    servo.set_servo_angle(servoStartAngle)
+    # servo.set_servo_angle(servoStartAngle)
 
     # Start the IMU data process
     imu_process = multiprocessing.Process(target=imu_data_process, args=(imu, shared_imu_data))
@@ -426,9 +427,9 @@ if __name__ == "__main__":
             # detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
             # print(f"Altitude: {shared_imu_data[9]:.2f} m, Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, Landing Detected: {landing_detected.value}, Detection Time: {detection_time}")
             # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
-            # print(f"Pressure: {shared_imu_data[8]:.2f}, Pressure: {shared_imu_data[9]:.2f}")
+            # print(f"Pressure: {shared_imu_data[8]:.2f}, Altitude: {shared_imu_data[9]:.2f}")
             # print(survivability_percentage.value)
-            # print(current_velocity.value)
+            print(current_velocity.value)
             a = 1+1
 
 
@@ -456,6 +457,6 @@ if __name__ == "__main__":
         lgpio.gpio_write(GPIO_ENABLE, 17, 0)
         lgpio.gpio_write(GPIO_ENABLE, 19, 0)
         lgpio.gpiochip_close(GPIO_ENABLE)
-        servo.set_servo_angle(servoStartAngle)
+        # servo.set_servo_angle(servoStartAngle)
         servo.release()
         print("GPIO cleanup and program terminated.")
