@@ -17,12 +17,12 @@ import lgpio
 
 # Test Use
 landingAccMagThreshold = 5  # m/s^2
-groundLevel = 97.36  # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+groundLevel = 141.16  # TEMP
 landingAltitudeThreshold = groundLevel + 10
 initialAltitudeThreshold = groundLevel - 10
 
 # Timeout tracking variables
-timeout_length = 20
+timeout_length = 10
 
 # Temperature Offser
 tOffset = -6
@@ -254,16 +254,33 @@ def send_rf_data_process(shared_rf_data, landing_detected):
         sender.monitor_and_send(rf_data)
         time.sleep(0.5)
 
-
 def release_latch_servo(servo, landing_detected):
     """
     Process function to release the latch and servo when landing is detected.
     """
+    def wait_and_turn_off_rf(interval):
+        """
+        Wait for the specified interval (in seconds) and turn off the RF GPIO.
+        """
+        start_time = time.perf_counter()
+        while True:
+            current_time = time.perf_counter()
+            if current_time - start_time >= interval:
+                lgpio.gpio_write(GPIO_ENABLE, 17, 0)  # Turn off RF
+                # print("RF Disabled")
+                break
+
+    action_triggered = False  # Flag to ensure action happens only once
+
     while True:
-        if landing_detected.value:
-            servo.set_servo_angle(servoEndAngle) # Servo
-            lgpio.gpio_write(GPIO_ENABLE, 19, 1) # Latch
-            lgpio.gpio_write(GPIO_ENABLE, 17, 1) # RF
+        if landing_detected.value and not action_triggered:
+            action_triggered = True  # Set the flag
+            servo.set_servo_angle(servoEndAngle)  # Servo
+            lgpio.gpio_write(GPIO_ENABLE, 19, 1)  # Latch
+            lgpio.gpio_write(GPIO_ENABLE, 17, 1)  # RF
+            # print("RF Enabled")
+            # Wait for 5 minutes (300 seconds) and turn off RF
+            wait_and_turn_off_rf(300)
             break  # Stop the process after releasing the latch and servo
 
 def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved):
@@ -429,7 +446,7 @@ if __name__ == "__main__":
             # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
             # print(f"Pressure: {shared_imu_data[8]:.2f}, Altitude: {shared_imu_data[9]:.2f}")
             # print(survivability_percentage.value)
-            print(current_velocity.value)
+            # print(current_velocity.value)
             a = 1+1
 
 
