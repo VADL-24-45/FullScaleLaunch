@@ -1,56 +1,51 @@
 import time
-from collections import deque
-from multiprocessing import Process, Value, Lock
+from multiprocessing import Process, Value
 import os
 
-def rolling_logger(shared_buffer, flag, lock, pre_file):
+def rolling_logger(flag, pre_file, time_window=5):
     """
-    Logs the last 30 seconds of data into the pre_file.
+    Logs the last 5 seconds of data into the pre_file.
     """
-    time_window =   # 30 seconds rolling window
+    deque_buffer = []  # Local buffer for rolling window
+    print("Rolling logger started.")
     with open(pre_file, "w") as f:
         while True:
-            if flag.value:  # Exit rolling logging when flag is True
+            if flag.value:  # Exit when the flag is set to True
                 print("Rolling logger exiting.")
                 break
 
             current_time = time.perf_counter()
+            deque_buffer.append(current_time)
 
-            # Update the shared buffer
-            with lock:
-                shared_buffer.append(current_time)
-                while (current_time - shared_buffer[0]) > time_window:
-                    shared_buffer.popleft()
+            # Remove data older than the time window
+            deque_buffer = [t for t in deque_buffer if current_time - t <= time_window]
 
-                # Write the buffer to the pre_file
-                f.seek(0)
-                f.truncate()
-                f.write("\n".join(f"{x:.2f}" for x in shared_buffer) + "\n")
-                f.flush()
-
-            time.sleep(0.1)  # Logging frequency
-
-
-def continuous_logger(shared_buffer, flag, lock, post_file):
-    """
-    Continuously logs data into the post_file once the flag is True.
-    """
-    with open(post_file, "w") as f:
-        while not flag.value:  # Wait for flag to turn True
-            time.sleep(0.1)
-
-        print("Continuous logger started.")
-        with lock:
-            # Write any remaining data from the buffer to the post_file
-            f.write("\n".join(f"{x:.2f}" for x in shared_buffer) + "\n")
+            # Write the buffer to the pre_file
+            f.seek(0)
+            f.truncate()
+            f.write("\n".join(f"{x:.2f}" for x in deque_buffer) + "\n")
             f.flush()
 
-        # Append new data continuously
+            print(f"Rolling Logger - Current Buffer: {deque_buffer}")
+            time.sleep(1)  # Logging frequency: 1 second
+
+
+def continuous_logger(flag, post_file):
+    """
+    Continuously logs data into the post_file after the flag is set to True.
+    """
+    print("Continuous logger waiting for flag.")
+    with open(post_file, "w") as f:
+        while not flag.value:  # Wait until the flag is True
+            time.sleep(1)
+
+        print("Continuous logger started.")
         while True:
             current_time = time.perf_counter()
             f.write(f"{current_time:.2f}\n")
             f.flush()
-            time.sleep(0.1)  # Logging frequency
+            print(f"Continuous Logger - Recorded: {current_time:.2f}")
+            time.sleep(1)  # Logging frequency: 1 second
 
 
 def combine_files(pre_file, post_file, output_file):
@@ -72,15 +67,13 @@ if __name__ == "__main__":
     post_file = "loopWriterTest_post.txt"
     output_file = "loopWriterTest_combined.txt"
 
-    # Shared resources
-    shared_buffer = deque(maxlen=10000)  # Large buffer for shared data
-    flag = Value('b', False)  # Boolean flag to switch modes
-    lock = Lock()  # Lock for synchronizing access to the shared buffer
+    # Shared boolean flag to control process behavior
+    flag = Value('b', False)  # Start in rolling logger mode
 
     try:
         # Start the processes
-        rolling_process = Process(target=rolling_logger, args=(shared_buffer, flag, lock, pre_file))
-        continuous_process = Process(target=continuous_logger, args=(shared_buffer, flag, lock, post_file))
+        rolling_process = Process(target=rolling_logger, args=(flag, pre_file))
+        continuous_process = Process(target=continuous_logger, args=(flag, post_file))
 
         rolling_process.start()
         continuous_process.start()
