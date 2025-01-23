@@ -13,8 +13,8 @@ def data_logging_process_test_2(shared_imu_data, shared_rf_data, initialAltitude
     output_file = "data_log_test_2_combined.txt"
 
     # Rolling buffer for pre-launch data (1-minute rolling window)
-    rolling_buffer = deque(maxlen=600)  # 600 entries for 1 minute at 10 Hz (100 ms interval)
-    target_frequency = 10  # Hz
+    rolling_buffer = deque(maxlen=6000)  # 600 entries for 1 minute at 10 Hz (100 ms interval)
+    target_frequency = 100  # Hz
     interval = 1 / target_frequency  # 100 ms
 
     start_time = time.perf_counter()
