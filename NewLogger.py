@@ -44,3 +44,15 @@ def data_logging_process_test(shared_imu_data, shared_rf_data, landing_detected,
                     max_velocity.value = current_velocity.value
 
                 start_time = current_time  # Update time step
+
+
+# Start the test data logging process
+data_logging_process_test = multiprocessing.Process(target=data_logging_process_test, args=(
+    shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved
+))
+data_logging_process_test.start()
+
+# Clean up
+data_logging_process_test.terminate()
+data_logging_process_test.join()
+
