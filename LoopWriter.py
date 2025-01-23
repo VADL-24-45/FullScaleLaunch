@@ -1,51 +1,75 @@
 import time
-from multiprocessing import Process, Value
 import os
+from collections import deque
 
-def rolling_logger(flag, pre_file, time_window=5):
+def data_logging_process_test_2(shared_imu_data, shared_rf_data, initialAltitudeAchieved, landing_detected, apogee_reached, current_velocity, landedState):
     """
-    Logs the last 5 seconds of data into the pre_file.
+    Logging process with launch detection (based on initialAltitudeAchieved) and post-landing timeout.
+    Logs pre-launch data (1-minute rolling buffer) and post-launch data into separate files, then combines them.
     """
-    deque_buffer = []  # Local buffer for rolling window
-    print("Rolling logger started.")
-    with open(pre_file, "w") as f:
+    # File names
+    pre_file = "data_log_test_2_pre.txt"
+    post_file = "data_log_test_2_post.txt"
+    output_file = "data_log_test_2_combined.txt"
+
+    # Rolling buffer for pre-launch data (1-minute rolling window)
+    rolling_buffer = deque(maxlen=600)  # 600 entries for 1 minute at 10 Hz (100 ms interval)
+    target_frequency = 10  # Hz
+    interval = 1 / target_frequency  # 100 ms
+
+    start_time = time.perf_counter()
+    last_logging_time = start_time  # To control logging frequency
+    landing_event_time = None  # To track the time of landing detection
+
+    print("Data logging process test 2 started.")
+
+    with open(pre_file, "w") as pre_f, open(post_file, "w") as post_f:
         while True:
-            if flag.value:  # Exit when the flag is set to True
-                print("Rolling logger exiting.")
-                break
+            current_time = time.perf_counter()  # Current time
 
-            current_time = time.perf_counter()
-            deque_buffer.append(current_time)
+            # Ensure consistent logging frequency
+            if current_time - last_logging_time >= interval:
+                # Pre-launch logging (rolling buffer) until initialAltitudeAchieved is True
+                if not initialAltitudeAchieved.value:
+                    # Collect data into rolling buffer
+                    rolling_buffer.append(
+                        f"{current_time:.2f},{shared_imu_data[0]:.2f},{shared_imu_data[1]:.2f},{shared_imu_data[2]:.2f},{shared_imu_data[3]:.2f},"
+                        f"{shared_imu_data[4]:.2f},{shared_imu_data[5]:.2f},{shared_imu_data[6]:.2f},{shared_imu_data[7]:.2f},{shared_imu_data[8]:.2f},"
+                        f"{shared_imu_data[9]:.2f},{shared_imu_data[10]:.2f},{shared_rf_data[0]:.2f},{shared_rf_data[1]:.2f},{shared_rf_data[2]:.2f},"
+                        f"{shared_rf_data[3]:.2f},{apogee_reached.value:.2f},{current_velocity.value:.2f},{int(landedState.value)}\n"
+                    )
 
-            # Remove data older than the time window
-            deque_buffer = [t for t in deque_buffer if current_time - t <= time_window]
+                    # Write rolling buffer to pre-file
+                    pre_f.seek(0)
+                    pre_f.truncate()
+                    pre_f.write("".join(rolling_buffer))
+                    pre_f.flush()
+                else:
+                    # Start continuous logging after launch detection
+                    post_f.write(
+                        f"{current_time:.2f},{shared_imu_data[0]:.2f},{shared_imu_data[1]:.2f},{shared_imu_data[2]:.2f},{shared_imu_data[3]:.2f},"
+                        f"{shared_imu_data[4]:.2f},{shared_imu_data[5]:.2f},{shared_imu_data[6]:.2f},{shared_imu_data[7]:.2f},{shared_imu_data[8]:.2f},"
+                        f"{shared_imu_data[9]:.2f},{shared_imu_data[10]:.2f},{shared_rf_data[0]:.2f},{shared_rf_data[1]:.2f},{shared_rf_data[2]:.2f},"
+                        f"{shared_rf_data[3]:.2f},{apogee_reached.value:.2f},{current_velocity.value:.2f},{int(landedState.value)}\n"
+                    )
+                    post_f.flush()
 
-            # Write the buffer to the pre_file
-            f.seek(0)
-            f.truncate()
-            f.write("\n".join(f"{x:.2f}" for x in deque_buffer) + "\n")
-            f.flush()
+                    # Check for landing event
+                    if landing_detected.value and landing_event_time is None:
+                        landing_event_time = current_time
+                        print("Landing detected. Starting post-landing timeout.")
 
-            print(f"Rolling Logger - Current Buffer: {deque_buffer}")
-            time.sleep(1)  # Logging frequency: 1 second
+                    # Timeout after 3 minutes post-landing
+                    if landing_event_time and current_time - landing_event_time >= 180:
+                        print("Timeout reached. Stopping logging process.")
+                        break
 
+                # Update the last logging time
+                last_logging_time = current_time
 
-def continuous_logger(flag, post_file):
-    """
-    Continuously logs data into the post_file after the flag is set to True.
-    """
-    print("Continuous logger waiting for flag.")
-    with open(post_file, "w") as f:
-        while not flag.value:  # Wait until the flag is True
-            time.sleep(1)
-
-        print("Continuous logger started.")
-        while True:
-            current_time = time.perf_counter()
-            f.write(f"{current_time:.2f}\n")
-            f.flush()
-            print(f"Continuous Logger - Recorded: {current_time:.2f}")
-            time.sleep(1)  # Logging frequency: 1 second
+    # Combine pre and post files
+    combine_files(pre_file, post_file, output_file)
+    print(f"Data logging completed. Logs combined into {output_file}")
 
 
 def combine_files(pre_file, post_file, output_file):
@@ -60,46 +84,3 @@ def combine_files(pre_file, post_file, output_file):
             with open(post_file, "r") as post_f:
                 out_f.write(post_f.read())
     print(f"Combined files into {output_file}")
-
-
-if __name__ == "__main__":
-    pre_file = "loopWriterTest_pre.txt"
-    post_file = "loopWriterTest_post.txt"
-    output_file = "loopWriterTest_combined.txt"
-
-    # Shared boolean flag to control process behavior
-    flag = Value('b', False)  # Start in rolling logger mode
-
-    try:
-        # Start the processes
-        rolling_process = Process(target=rolling_logger, args=(flag, pre_file))
-        continuous_process = Process(target=continuous_logger, args=(flag, post_file))
-
-        rolling_process.start()
-        continuous_process.start()
-
-        print("Processes started. Enter 'True' to switch modes.")
-
-        # Wait for user input to change the flag
-        while True:
-            user_input = input("Enter 'True' to switch to continuous logging: ").strip().lower()
-            if user_input == "true":
-                with flag.get_lock():
-                    flag.value = True
-                print("Flag switched to True.")
-                break
-
-        # Wait for processes to finish
-        rolling_process.join()
-        continuous_process.join()
-
-    except KeyboardInterrupt:
-        print("\nProgram interrupted. Terminating processes...")
-        rolling_process.terminate()
-        continuous_process.terminate()
-        rolling_process.join()
-        continuous_process.join()
-    finally:
-        # Combine files on exit
-        combine_files(pre_file, post_file, output_file)
-        print("Program exited gracefully.")
