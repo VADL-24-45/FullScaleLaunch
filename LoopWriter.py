@@ -74,13 +74,23 @@ def data_logging_process_test_2(shared_imu_data, shared_rf_data, initialAltitude
 
 def combine_files(pre_file, post_file, output_file):
     """
-    Combine pre_file and post_file into a single output file.
+    Combine pre_file and post_file into a single output file, with column headers added.
     """
+    # Define column headers
+    headers = "Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,rf_data_1,rf_data_2,rf_data_3,rf_data_4,apogee_reached,current_velocity,landedState\n"
+
     with open(output_file, "w") as out_f:
+        # Write headers to the output file
+        out_f.write(headers)
+
+        # Add contents of the pre-file if it exists
         if os.path.exists(pre_file):
             with open(pre_file, "r") as pre_f:
                 out_f.write(pre_f.read())
+
+        # Add contents of the post-file if it exists
         if os.path.exists(post_file):
             with open(post_file, "r") as post_f:
                 out_f.write(post_f.read())
-    print(f"Combined files into {output_file}")
+
+    print(f"Combined files into {output_file} with column headers added.")
