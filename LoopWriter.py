@@ -77,7 +77,7 @@ def combine_files(pre_file, post_file, output_file):
     Combine pre_file and post_file into a single output file, with column headers added.
     """
     # Define column headers
-    headers = "Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,rf_data_1,rf_data_2,rf_data_3,rf_data_4,apogee_reached,current_velocity,landedState\n"
+    headers = "Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,temperature_2,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,apogee_reached, current_velocity, landedState,initialAltitudeAchieved\n"
 
     with open(output_file, "w") as out_f:
         # Write headers to the output file
