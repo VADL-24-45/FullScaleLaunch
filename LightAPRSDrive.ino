@@ -22,15 +22,16 @@
 #define AprsPinInput  pinMode(12, INPUT);pinMode(13, INPUT);pinMode(14, INPUT);pinMode(15, INPUT)
 #define AprsPinOutput pinMode(12, OUTPUT);pinMode(13, OUTPUT);pinMode(14, OUTPUT);pinMode(15, OUTPUT)
 
-char CallSign[7] = "KQ4VMR";
+char CallSign[7] = "KQ4VKK";
 int CallNumber = 11;
 char Symbol = 'O';
 char StatusMessage[50] = "Vanderbilt VADL Test Message";
 unsigned int BeaconWait = 10;
 uint16_t TxCount = 1;
+int ENABLE = 0; // Enable
 
-float receivedFloats[13];  // Updated buffer to store the 13 received floats
-int floatCount = 0;        // Count of received floats
+float receivedFloats[13];  // Buffer to store the 13 received floats
+int floatCount = 0;       // Count of received floats
 const float END_MARKER = -999.0;
 
 void setup() {
@@ -42,6 +43,7 @@ void setup() {
   pinMode(RfPDPin, OUTPUT);
   pinMode(RfPwrHLPin, OUTPUT);
   pinMode(RfPttPin, OUTPUT);
+  pinMode(7, INPUT); // Enable Pin, SCK
   RfOFF;
   RfPwrLow;
   RfPttOFF;
@@ -91,19 +93,29 @@ void receiveEvent(int howMany) {
 
 void loop() {
   static int messageGroup = 0;  // Counter to track which message group to send
+  ENABLE = digitalRead(7); // Check for ENABLE Signal
+  // ENABLE = HIGH;
 
-  Serial.print(F("Sending status message, TX Count: "));
-  Serial.println(TxCount);
+  if (ENABLE == HIGH) {
+    Serial.print(F("Sending status message, TX Count: "));
+    Serial.println(TxCount);
 
-  Wire.onReceive(nullptr);
-  sendStatus(messageGroup);
-  Wire.onReceive(receiveEvent);
+    Wire.onReceive(nullptr);
+    sendStatus(messageGroup);
+    Wire.onReceive(receiveEvent);
 
-  Serial.println(F("Status message sent, entering delay..."));
-  delay(BeaconWait * 1000);
+    Serial.println(F("Status message sent, entering delay..."));
+    delay(BeaconWait * 1000);
 
-  // Increment and wrap around message group using modulo
-  messageGroup = (messageGroup + 1) % 2;
+    // Increment and wrap around message group using modulo
+    messageGroup = (messageGroup + 1) % 4;
+  } else {
+    Serial.println("RF Disabled");
+  }
+}
+
+int aprs_msg_callback(AX25Msg*) {
+  // Important function - placeholder for handling received APRS messages
 }
 
 void sendStatus(int group) {
@@ -112,29 +124,75 @@ void sendStatus(int group) {
 
   switch (group) {
     case 0:
-      // Construct the status buffer for the first set of floats (first 6)
-      strcpy(status_buff, "T");
-      for (int i = 0; i < 6; i++) {
-        dtostrf(receivedFloats[i], 3, 2, floatStr);
-        strcat(status_buff, " ");
-        strcat(status_buff, floatStr);
-      }
+      // Construct the status buffer for floats 1-4: "T: float1, A: float2, B: float3, S: float4"
+      strcat(status_buff, "T:");
+      dtostrf(receivedFloats[0], 3, 2, floatStr);
+      strcat(status_buff, floatStr);
+
+      strcat(status_buff, " A:");
+      dtostrf(receivedFloats[1], 3, 2, floatStr);
+      strcat(status_buff, floatStr);
+
+      strcat(status_buff, " B:");
+      dtostrf(receivedFloats[2], 3, 2, floatStr);
+      strcat(status_buff, floatStr);
+
+      strcat(status_buff, " S:");
+      dtostrf(receivedFloats[3], 3, 2, floatStr);
+      strcat(status_buff, floatStr);
       break;
 
     case 1:
-      // Construct the status buffer for the second set of floats (remaining 7)
-      for (int i = 6; i < 13; i++) {
-        strcat(status_buff, " ");
-        dtostrf(receivedFloats[i], 3, 2, floatStr);
-        strcat(status_buff, floatStr);
-      }
+      // Construct the status buffer for floats 5-8: "Qw: float5, Qx: float6, Qy: float7, Qz: float8"
+      strcat(status_buff, "Qw:");
+      dtostrf(receivedFloats[4], 3, 2, floatStr);
+      strcat(status_buff, floatStr);
+
+      strcat(status_buff, " Qx:");
+      dtostrf(receivedFloats[5], 3, 2, floatStr);
+      strcat(status_buff, floatStr);
+
+      strcat(status_buff, " Qy:");
+      dtostrf(receivedFloats[6], 3, 2, floatStr);
+      strcat(status_buff, floatStr);
+
+      strcat(status_buff, " Qz:");
+      dtostrf(receivedFloats[7], 3, 2, floatStr);
+      strcat(status_buff, floatStr);
+      break;
+
+    case 2:
+      // Construct the status buffer for floats 9-11: "LandingT: int(float9):int(float10):int(float11)"
+      strcat(status_buff, "LandingT:");
+      sprintf(floatStr, "%d", (int)receivedFloats[8]);  // Cast float to int and format as string
+      strcat(status_buff, floatStr);
+
+      strcat(status_buff, ":");
+      sprintf(floatStr, "%d", (int)receivedFloats[9]);  // Cast float to int and format as string
+      strcat(status_buff, floatStr);
+
+      strcat(status_buff, ":");
+      sprintf(floatStr, "%d", (int)receivedFloats[10]);  // Cast float to int and format as string
+      strcat(status_buff, floatStr);
+      break;
+
+
+    case 3:
+      // Construct the status buffer for floats 12-13: "MaxV: float12, LV: float13"
+      strcat(status_buff, "MaxV:");
+      dtostrf(receivedFloats[11], 3, 2, floatStr);
+      strcat(status_buff, floatStr);
+
+      strcat(status_buff, " LV:");
+      dtostrf(receivedFloats[12], 3, 2, floatStr);
+      strcat(status_buff, floatStr);
       break;
   }
 
   Serial.print(F("Status buffer: "));
   Serial.println(status_buff);
 
-  // RF transmission code remains unchanged
+  // Proceed with APRS transmission
   AprsPinOutput;
   RfON;
   delay(2000);
@@ -154,15 +212,4 @@ void sendStatus(int group) {
   Serial.println(F("Transmission complete, RF off"));
 
   TxCount++;
-
-  // Clear the transmitted floats after sending
-  int startIndex = (group == 0) ? 0 : 6;
-  int endIndex = (group == 0) ? 6 : 13;
-  for (int i = startIndex; i < endIndex; i++) {
-    receivedFloats[i] = 0.0;
-  }
-}
-
-int aprs_msg_callback(AX25Msg*) {
-  // Important function - placeholder for handling received APRS messages
 }
