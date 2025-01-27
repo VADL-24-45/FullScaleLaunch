@@ -45,7 +45,7 @@ void setup() {
   pinMode(RfPttPin, OUTPUT);
   pinMode(7, INPUT); // Enable Pin, SCK
   RfOFF;
-  RfPwrLow;
+  RfPwrHigh;
   RfPttOFF;
 
   Serial.println(F("APRS minimalistic beacon started"));
@@ -93,8 +93,8 @@ void receiveEvent(int howMany) {
 
 void loop() {
   static int messageGroup = 0;  // Counter to track which message group to send
-  ENABLE = digitalRead(7); // Check for ENABLE Signal
-  // ENABLE = HIGH;
+  // ENABLE = digitalRead(7); // Check for ENABLE Signal
+  ENABLE = HIGH;
 
   if (ENABLE == HIGH) {
     Serial.print(F("Sending status message, TX Count: "));
