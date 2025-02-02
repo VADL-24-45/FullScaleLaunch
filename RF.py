@@ -24,17 +24,21 @@ class I2CSender:
         if self.active:
             for f in float_data:
                 self.send_float(f)  # Send one float at a time
-                print(f"Data sent: {f}")  # Print to console for confirmation
+                # print(f"Data sent: {f}")  # Print to console for confirmation
                 time.sleep(0.1)  # Small delay between transmissions
 
             # Send the end marker
             self.send_float(self.end_marker)
-            print("End marker sent")
+            # print("End marker sent")
             time.sleep(0.1)  # Small delay after sending end marker
 
     # Function to set the active status
     def set_active(self, status):
         self.active = status
+
+    def close(self):  # Gracefully close the I2C bus
+        print("Closing I2C bus...")
+        self.bus.close()
 
 # Example usage
 if __name__ == "__main__":
