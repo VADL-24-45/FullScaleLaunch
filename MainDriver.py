@@ -14,23 +14,23 @@ import signal
 import sys
 
 # Threshold values (Flight Use)
-# landingAccMagThreshold = 30  # m/s^2
-# groundLevel = 104 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-# initialAltitudeThreshold = groundLevel + 25 # This need to be larger
-# landingAltitudeThreshold = groundLevel + 20
+landingAccMagThreshold = 30  # m/s^2
+groundLevel = 150 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+initialAltitudeThreshold = groundLevel + 25 # This need to be larger
+landingAltitudeThreshold = groundLevel + 20
 
 
 # # Test Use
-landingAccMagThreshold =  5 # m/s^2
-groundLevel = 112.76  # TEMP
-initialAltitudeThreshold = groundLevel - 10 # This need to be larger
-landingAltitudeThreshold = groundLevel + 5
+# landingAccMagThreshold =  25 # m/s^2
+# groundLevel = 137.70  # TEMP
+# initialAltitudeThreshold = groundLevel - 10 # This need to be larger
+# landingAltitudeThreshold = groundLevel + 5
 
 
 # Timeout tracking variables
-timeout_length = 300
+timeout_length = 60
 # RF_TIMEOUT = 300
-RF_TIMEOUT = 300
+RF_TIMEOUT = 180
 
 # Temperature Offser
 tOffset = -6
@@ -330,26 +330,29 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
 
     time.sleep(5)
 
+    # Write header once before entering the loop
     with open("data_log.txt", "w") as f:
-        # Write header to file
-        f.write("Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,temperature_2,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,apogee_reached, current_velocity, landedState,initialAltitudeAchieved\n")
-        while True:
-            current_time = time.perf_counter() # Update
+        f.write("Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,temperature_2,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,apogee_reached,current_velocity,landedState,initialAltitudeAchieved\n")
 
-            if current_time - start_time >= interval:
-                # Format data into a string
-                data_str = (
-                    f"{current_time:.2f},{shared_imu_data[0]:.2f},{shared_imu_data[1]:.2f},{shared_imu_data[2]:.2f},{shared_imu_data[3]:.2f},"
-                    f"{shared_imu_data[4]:.2f},{shared_imu_data[5]:.2f},{shared_imu_data[6]:.2f},{shared_imu_data[7]:.2f},{shared_imu_data[8]:.2f},"
-                    f"{shared_imu_data[9]:.2f},{shared_imu_data[10]:.2f},{shared_rf_data[0]:.2f},{shared_rf_data[1]:.2f},{shared_rf_data[2]:.2f},"
-                    f"{shared_rf_data[3]:.2f},{shared_rf_data[8]:.0f},{shared_rf_data[9]:.0f},{shared_rf_data[10]:.0f},{shared_rf_data[11]:.2f},"
-                    f"{shared_rf_data[12]:.2f},{apogee_reached.value:.2f}, {current_velocity.value:.2f}, {int(landedState.value)},{int(initialAltitudeAchieved.value)}\n"
-                )
-                # Write data to file
+    while True:
+        current_time = time.perf_counter()  # Update time
+
+        if current_time - start_time >= interval:
+            # Format data into a string
+            data_str = (
+                f"{current_time:.2f},{shared_imu_data[0]:.2f},{shared_imu_data[1]:.2f},{shared_imu_data[2]:.2f},{shared_imu_data[3]:.2f},"
+                f"{shared_imu_data[4]:.2f},{shared_imu_data[5]:.2f},{shared_imu_data[6]:.2f},{shared_imu_data[7]:.2f},{shared_imu_data[8]:.2f},"
+                f"{shared_imu_data[9]:.2f},{shared_imu_data[10]:.2f},{shared_rf_data[0]:.2f},{shared_rf_data[1]:.2f},{shared_rf_data[2]:.2f},"
+                f"{shared_rf_data[3]:.2f},{shared_rf_data[8]:.0f},{shared_rf_data[9]:.0f},{shared_rf_data[10]:.0f},{shared_rf_data[11]:.2f},"
+                f"{shared_rf_data[12]:.2f},{apogee_reached.value:.2f},{current_velocity.value:.2f},{int(landedState.value)},{int(initialAltitudeAchieved.value)}\n"
+            )
+
+            # Open file, write data, flush, and close
+            with open("data_log.txt", "a") as f:
                 f.write(data_str)
                 f.flush()  # Ensure data is written immediately
 
-                start_time = current_time # Update time step
+            start_time = current_time  # Update time step
 
 def update_velocity_process(shared_imu_data, landing_detected):
     # Parameters
