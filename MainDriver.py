@@ -22,15 +22,17 @@ import sys
 
 # # Test Use
 landingAccMagThreshold = 25 # m/s^2
-groundLevel = -21 # M
-initialAltitudeThreshold = groundLevel + 25
+groundLevel = 4.66 # M
+initialAltitudeThreshold = groundLevel -20
 landingAltitudeThreshold = groundLevel + 10
 
 
 # Timeout tracking variables
-LOW_ALTITUDE_TIMEOUT = 60
+LOW_ALTITUDE_TIMEOUT = 10
 RF_TIMEOUT = 120 # Default 300s = 5 Min
 SERVO_WAIT_TIME = 10 # Default 10s
+# LOGGER_TIMEOUT = 60
+# LOGGER_BUFFER = 2 * 60 * 100 # 2 x 60 minutes, at 100 Hz
 
 # Temperature Offser
 tOffset = -6
@@ -42,6 +44,7 @@ servoEndAngle = 275
 # RF ENABLE
 global GPIO_ENABLE
 
+# Global list to track processes
 processes = []
 
 # Shared data structure for IMU data (using Array for faster access)
@@ -65,6 +68,7 @@ battry_percentage = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for ba
 ledState = multiprocessing.Value(ctypes.c_bool, False)  # LED state flag
 landedState = multiprocessing.Value(ctypes.c_bool, False)  # Landed state flag
 initialAltitudeAchieved = multiprocessing.Value(ctypes.c_bool, False)  # Initial altitude achieved flag
+stop_requested = multiprocessing.Value(ctypes.c_bool, False) # Global Process Stop Flag
 
 sender = None
 imu = None
@@ -73,7 +77,13 @@ def imu_data_process(imu, shared_data):
     """
     Process function to continuously read data from the IMU and update the shared data structure.
     """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
     while True:
+        if stop_requested.value:
+            break
+
         imu.readData()
 
         if imu.currentData:
@@ -110,6 +120,10 @@ def landing_detection_process(shared_data, landing_detected, landing_detection_t
     Sets landing_detected to True based on altitude and acceleration thresholds.
     Publishes this condition over ZMQ socket.
     """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+
     # Set up ZMQ publisher
     # context = zmq.Context()
     # socket = context.socket(zmq.PUB)
@@ -121,6 +135,9 @@ def landing_detection_process(shared_data, landing_detected, landing_detection_t
     landing_logged = False    
 
     while True:
+        if stop_requested.value:
+            break    
+
         # Use calculated altitude and acceleration magnitude from shared data
         accel_magnitude = shared_data[10]
         altitude = shared_data[9]
@@ -174,6 +191,9 @@ def survivability_process(shared_data, survivability_percentage):
     """
     Process function to calculate and update the survivability percentage.
     """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
     # Constants
     omega = 52.90  # lumped spinal frequency (rad/s)
     zeta = 0.224  # damping ratio
@@ -188,6 +208,9 @@ def survivability_process(shared_data, survivability_percentage):
     last_time = time.time()
 
     while True:
+        if stop_requested.value:
+            break
+
         current_time = time.time()
         dt = current_time - last_time
         last_time = current_time
@@ -232,6 +255,9 @@ def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_
     """
     Process function to update shared_rf_data continuously until landing is detected.
     """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
     landed_time_set = False  # Flag to ensure landing time is only set once
     landed_velocity_set = False
     landing_velocity.value = 0
@@ -240,6 +266,9 @@ def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_
     velocity_ready_flag = False
 
     while True:
+        if stop_requested.value:
+            break
+
         shared_rf_data[12] = landing_velocity.value  # Landing velocity
         # Update Landing velocity
         if landing_detected.value and not landed_velocity_set:
@@ -282,8 +311,14 @@ def send_rf_data_process(shared_rf_data, landing_detected):
     """
     Process function to send RF data when landing is detected.
     """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
     # TO-DO: I have changed this to be active all time to avoid junk data. 
     while True:
+        if stop_requested.value:
+            break
+
         # Continuously Sending RF data
         sender.set_active(True)
         rf_data = [float(value) for value in shared_rf_data]  # Convert shared_rf_data to a list of floats
@@ -294,9 +329,15 @@ def release_latch_servo(servo, landing_detected):
     """
     Process function to release the latch and servo when landing is detected.
     """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
     action_triggered = False  # Flag to ensure action happens only once
 
     while True:
+        if stop_requested.value:
+            break
+
         if landing_detected.value and not action_triggered:
             action_triggered = True  # Set the flag
             # servo.set_servo_angle(servoEndAngle)  # Servo
@@ -308,6 +349,9 @@ def release_latch_servo(servo, landing_detected):
             servo_moved = False
 
             while True:
+                if stop_requested.value:
+                            break
+                
                 current_time = time.perf_counter()            
                 
                 if current_time - start_time >= SERVO_WAIT_TIME and not servo_moved:
@@ -320,10 +364,15 @@ def release_latch_servo(servo, landing_detected):
                     break
             break  # Stop the process after releasing the latch and servo
 
+
 def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved):
     """
-    Process function to log data into a text file which can later be opened with Excel.
+    Logging process with launch detection (based on initialAltitudeAchieved) and post-landing timeout.
+    Logs pre-launch data (2-minute rolling buffer at 100 Hz) and post-launch data into separate files, then combines them with column headers.
     """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
     target_frequency = 100  # Hz
     interval = 1 / target_frequency  # Seconds (10ms for 100Hz)
     start_time = time.perf_counter()
@@ -335,6 +384,9 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
         f.write("Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,current_velocity,landedState,initialAltitudeAchieved\n")
 
     while True:
+        if stop_requested.value:
+            break
+
         current_time = time.perf_counter()  # Update time
 
         if current_time - start_time >= interval:
@@ -377,6 +429,9 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
             start_time = current_time  # Update time step
 
 def update_velocity_process(shared_imu_data, landing_detected):
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    
     # Parameters
     target_frequency = 100  # Hz
     interval = 1 / target_frequency  # Seconds (5.56ms for 180Hz)
@@ -400,6 +455,9 @@ def update_velocity_process(shared_imu_data, landing_detected):
     start_time = time.perf_counter()
 
     while True:
+        if stop_requested.value:
+            break
+
         current_time = time.perf_counter()
         if current_time - start_time >= interval:
             # Get the current altitude from shared data
@@ -424,32 +482,34 @@ def update_velocity_process(shared_imu_data, landing_detected):
             # Reset the time step
             start_time = current_time
 
+def signal_handler(signum, frame):
+    """
+    Minimal signal handler that sets a global 'stop' flag
+    and does no I/O.
+    """
+    stop_requested.value = True
 
-# Global list to track processes
-processes = []
 
-def cleanup(signum, frame):
-    global sender
+def cleanup():
+    # Safe to do prints & file I/O as a normal function
     print("\nStopping processes...")
     sender.close()
-    
+
     # Terminate all child processes
     for p in processes:
         if p.is_alive():
-            p.terminate()  # Gracefully stop
+            p.terminate()
     for p in processes:
-        p.join()  # Wait for clean shutdown
+        p.join()
 
-    print("Processes stopped.")
+    # GPIO Cleanup
+    lgpio.gpio_write(GPIO_ENABLE, 17, 0)
+    lgpio.gpio_write(GPIO_ENABLE, 19, 0)
+    lgpio.gpiochip_close(GPIO_ENABLE)
+    servo.release()
 
-    # Ensure GPIOs are properly reset
-    lgpio.gpio_write(GPIO_ENABLE, 17, 0)  # Disable RF
-    lgpio.gpio_write(GPIO_ENABLE, 19, 0)  # Disable latch
-    lgpio.gpiochip_close(GPIO_ENABLE)  # Close GPIO chip
-    servo.release()  # Reset the servo
-    print("GPIO cleanup and program terminated.")
+    print("Processes stopped. GPIO cleanup done.")
 
-    sys.exit(0)  # Force exit program cleanly
 
 if __name__ == "__main__":
     # Initialize the IMU
@@ -504,13 +564,26 @@ if __name__ == "__main__":
 
     # Register signal handlers **AFTER** defining processes
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
-        signal.signal(sig, cleanup)
+        signal.signal(sig, signal_handler)
+
 
     try:
         while True:
             detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
-            print(f"Altitude: {shared_imu_data[9]:.2f} m, Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, Landing Detected: {landing_detected.value}, Detection Time: {detection_time}")
+            print(
+                f"Altitude: {shared_imu_data[9]:.2f} m, "
+                f"Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, "
+                f"Landing Detected: {landing_detected.value}, "
+                f"Detection Time: {detection_time}"
+            )
             # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
-    
+            
+            # Catch Exit
+            if stop_requested.value:
+                # If signaled, do real cleanup and exit
+                cleanup()
+                sys.exit(0)
+
     except KeyboardInterrupt:
-        cleanup(signal.SIGINT, None)  # Handle Ctrl+C gracefully
+        cleanup()
+        sys.exit(0)
