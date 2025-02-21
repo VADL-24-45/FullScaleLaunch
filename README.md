@@ -65,15 +65,22 @@
      landingAltitudeThreshold = groundLevel + 5
      ```
    - **Modify `groundLevel`** (and associated thresholds) to suit your test scenario.
+   - Modify timeout values too. 
 
 4. **Re-run the Program in the Background**  
    - When ready for continuous operation:
      ```bash
      sudo nohup python3 MainDriver.py >/dev/null 2>err.out & echo $! > script.pid
      ```
-   - This command allows you to simulate or monitor post-landing conditions.
+   - This command runs the program in the background, with minimal resource usage.
 
-5. **Check If Running & Stop**
+5. **Check Hardware (RF Board) Connectivity**
+   ```bash
+   sudo i2cdetect -y 1
+   ```
+   - A grid of addresses indicates that the RF board is detected and functional.
+
+6. **Check If Running & Stop**
    ```bash
    pgrep -f MainDriver.py
    ```  
@@ -81,7 +88,7 @@
    kill -SIGTERM $(cat script.pid)
    ```
 
-6. **Download IMU Data**  
+7. **Download IMU Data**  
    - Using VS Code’s File Explorer, **download** the relevant data files to your local machine.
 
 ---
@@ -94,5 +101,5 @@
 ---
 
 **End of Procedure**  
-_These instructions have been provided in good faith to assist with IMU testing and data collection. The user/operator remains fully responsible for the safe handling and operation of all software and hardware components._
+_These instructions have been provided in good faith to assist with Operation. The user/operator remains fully responsible for the safe handling and operation of all software and hardware components._
 ```
