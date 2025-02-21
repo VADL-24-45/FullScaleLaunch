@@ -1,6 +1,4 @@
-# IMU Operation Procedure
-
-This repository provides a structured process for running and testing an Inertial Measurement Unit (IMU) system on a Raspberry Pi via Visual Studio Code (VS Code). 
+# Full-Scale Launch Operation Procedure
 
 > **Disclaimer**  
 > Any test performed, including mishandling of electronics or causing software issues, is done at the operator’s own risk. The operator bears full responsibility for any failures or damages.
