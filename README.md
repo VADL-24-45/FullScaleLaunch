@@ -44,39 +44,7 @@
 
 ---
 
-## Case 1: Run IMU Data with `MainDriver.py`
-
-1. **Start the Program**  
-   ```bash
-   sudo nohup python3 MainDriver.py >/dev/null 2>err.out & echo $! > script.pid
-   ```
-   - This command executes `MainDriver.py` in the background.  
-   - The process ID (PID) is stored in the `script.pid` file.
-
-2. **Verify It’s Running**  
-   ```bash
-   pgrep -f MainDriver.py
-   ```
-   - If this displays a process number, the script is active.
-
-3. **Check Hardware (RF Board) Connectivity**  
-   ```bash
-   sudo i2cdetect -y 1
-   ```
-   - A grid of addresses indicates that the RF board is detected and functional.
-
-4. **Stop the Program**  
-   ```bash
-   kill -SIGTERM $(cat script.pid)
-   ```
-   - Cleanly terminates the running `MainDriver.py`.
-
-5. **Download IMU Data**  
-   - In VS Code’s Explorer, right-click on the data file(s) generated during the run and **download** them to your local machine.
-
----
-
-## Case 2: Test Post-Landing
+## Operation Procedure
 
 1. **Calibrate Altitude**  
    - In the `RocketTeam/IMU` directory, run:
