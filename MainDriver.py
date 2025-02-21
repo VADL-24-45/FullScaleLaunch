@@ -14,23 +14,23 @@ import signal
 import sys
 
 # Threshold values (Flight Use)
-landingAccMagThreshold = 30  # m/s^2
-groundLevel = 150 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-initialAltitudeThreshold = groundLevel + 25 # This need to be larger
-landingAltitudeThreshold = groundLevel + 20
+# landingAccMagThreshold = 30  # m/s^2
+# groundLevel = 150 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+# initialAltitudeThreshold = groundLevel + 25 # This need to be larger
+# landingAltitudeThreshold = groundLevel + 20
 
 
 # # Test Use
-# landingAccMagThreshold =  25 # m/s^2
-# groundLevel = 137.70  # TEMP
-# initialAltitudeThreshold = groundLevel - 10 # This need to be larger
-# landingAltitudeThreshold = groundLevel + 5
+landingAccMagThreshold = 25 # m/s^2
+groundLevel = -21 # M
+initialAltitudeThreshold = groundLevel + 25
+landingAltitudeThreshold = groundLevel + 10
 
 
 # Timeout tracking variables
-timeout_length = 60
-# RF_TIMEOUT = 300
-RF_TIMEOUT = 180
+LOW_ALTITUDE_TIMEOUT = 60
+RF_TIMEOUT = 120 # Default 300s = 5 Min
+SERVO_WAIT_TIME = 10 # Default 10s
 
 # Temperature Offser
 tOffset = -6
@@ -38,7 +38,6 @@ tOffset = -6
 # Servo Angle
 servoStartAngle = 0
 servoEndAngle = 275
-
 
 # RF ENABLE
 global GPIO_ENABLE
@@ -151,7 +150,7 @@ def landing_detection_process(shared_data, landing_detected, landing_detection_t
 
             # print(f"{(time.perf_counter() - timeout_start_time):.2f}")
 
-            if time.perf_counter() - timeout_start_time >= timeout_length:
+            if time.perf_counter() - timeout_start_time >= LOW_ALTITUDE_TIMEOUT:
                 # Landing conditions are met
                 landedState.value = True
                 landing_detected.value = True
@@ -295,29 +294,30 @@ def release_latch_servo(servo, landing_detected):
     """
     Process function to release the latch and servo when landing is detected.
     """
-    def wait_and_turn_off_rf(interval):
-        """
-        Wait for the specified interval (in seconds) and turn off the RF GPIO.
-        """
-        start_time = time.perf_counter()
-        while True:
-            current_time = time.perf_counter()
-            if current_time - start_time >= interval:
-                lgpio.gpio_write(GPIO_ENABLE, 17, 0)  # Turn off RF
-                # print("RF Disabled")
-                break
-
     action_triggered = False  # Flag to ensure action happens only once
 
     while True:
         if landing_detected.value and not action_triggered:
             action_triggered = True  # Set the flag
-            servo.set_servo_angle(servoEndAngle)  # Servo
+            # servo.set_servo_angle(servoEndAngle)  # Servo
             lgpio.gpio_write(GPIO_ENABLE, 19, 1)  # Latch
             lgpio.gpio_write(GPIO_ENABLE, 17, 1)  # RF
             # print("RF Enabled")
             # Wait for 5 minutes (300 seconds) and turn off RF
-            wait_and_turn_off_rf(RF_TIMEOUT)
+            start_time = time.perf_counter()
+            servo_moved = False
+
+            while True:
+                current_time = time.perf_counter()            
+                
+                if current_time - start_time >= SERVO_WAIT_TIME and not servo_moved:
+                    servo.set_servo_angle(servoEndAngle)
+                    servo_moved = True
+
+                if current_time - start_time >= RF_TIMEOUT:
+                    lgpio.gpio_write(GPIO_ENABLE, 17, 0)  # Turn off RF
+                    # print("RF Disabled")
+                    break
             break  # Stop the process after releasing the latch and servo
 
 def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved):
@@ -332,7 +332,7 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
 
     # Write header once before entering the loop
     with open("data_log.txt", "w") as f:
-        f.write("Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,temperature_2,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,apogee_reached,current_velocity,landedState,initialAltitudeAchieved\n")
+        f.write("Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,current_velocity,landedState,initialAltitudeAchieved\n")
 
     while True:
         current_time = time.perf_counter()  # Update time
@@ -340,12 +340,34 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
         if current_time - start_time >= interval:
             # Format data into a string
             data_str = (
-                f"{current_time:.2f},{shared_imu_data[0]:.2f},{shared_imu_data[1]:.2f},{shared_imu_data[2]:.2f},{shared_imu_data[3]:.2f},"
-                f"{shared_imu_data[4]:.2f},{shared_imu_data[5]:.2f},{shared_imu_data[6]:.2f},{shared_imu_data[7]:.2f},{shared_imu_data[8]:.2f},"
-                f"{shared_imu_data[9]:.2f},{shared_imu_data[10]:.2f},{shared_rf_data[0]:.2f},{shared_rf_data[1]:.2f},{shared_rf_data[2]:.2f},"
-                f"{shared_rf_data[3]:.2f},{shared_rf_data[8]:.0f},{shared_rf_data[9]:.0f},{shared_rf_data[10]:.0f},{shared_rf_data[11]:.2f},"
-                f"{shared_rf_data[12]:.2f},{apogee_reached.value:.2f},{current_velocity.value:.2f},{int(landedState.value)},{int(initialAltitudeAchieved.value)}\n"
+                f"{current_time:.2f},"               # 1  Time
+                f"{shared_imu_data[0]:.2f},"         # 2  Q_w
+                f"{shared_imu_data[1]:.2f},"         # 3  Q_x
+                f"{shared_imu_data[2]:.2f},"         # 4  Q_y
+                f"{shared_imu_data[3]:.2f},"         # 5  Q_z
+                f"{shared_imu_data[4]:.2f},"         # 6  a_x
+                f"{shared_imu_data[5]:.2f},"         # 7  a_y
+                f"{shared_imu_data[6]:.2f},"         # 8  a_z
+                f"{shared_imu_data[7]:.2f},"         # 9  temperature
+                f"{shared_imu_data[8]:.2f},"         # 10 pressure
+                f"{shared_imu_data[9]:.2f},"         # 11 altitude
+                f"{shared_imu_data[10]:.2f},"        # 12 accel_magnitude
+
+                f"{shared_rf_data[1]:.2f},"          # 13 apogee
+                f"{shared_rf_data[2]:.2f},"          # 14 battery_percentage
+                f"{shared_rf_data[3]:.2f},"          # 15 survivability_percentage
+                f"{shared_rf_data[8]:.0f},"          # 16 detection_time_H
+                f"{shared_rf_data[9]:.0f},"          # 17 detection_time_M
+                f"{shared_rf_data[10]:.0f},"         # 18 detection_time_S
+                f"{shared_rf_data[11]:.2f},"         # 19 max_velocity
+                f"{shared_rf_data[12]:.2f},"         # 20 landing_velocity
+
+                f"{current_velocity.value:.2f},"     # 21 current_velocity
+                f"{int(landedState.value)},"         # 22 landedState
+                f"{int(initialAltitudeAchieved.value)}\n"  # 23 initialAltitudeAchieved
             )
+
+
 
             # Open file, write data, flush, and close
             with open("data_log.txt", "a") as f:
@@ -402,155 +424,6 @@ def update_velocity_process(shared_imu_data, landing_detected):
             # Reset the time step
             start_time = current_time
 
-
-# def data_logging_process_test(shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved):
-#     """
-#     Process function to log data into a text file (data_log_test.txt) which can later be opened with Excel.
-#     Adds a 3-minute timeout after the 'landing_detected' event is marked True.
-#     """
-#     max_velocity.value = 0
-#     target_frequency = 100  # Hz
-#     interval = 1 / target_frequency  # Seconds (10ms for 100Hz)
-#     start_time = time.perf_counter()
-#     landing_event_time = None  # Variable to track the time of landing detection
-
-#     time.sleep(5)
-
-#     with open("data_log_test.txt", "w") as f:
-#         # Write header to file
-#         f.write("Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,temperature_2,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,apogee_reached,current_velocity,landedState,initialAltitudeAchieved\n")
-#         while True:
-#             current_time = time.perf_counter()  # Update current time
-
-#             # Stop logging if timeout after landing_detected has occurred
-#             if landing_detected.value and landing_event_time is None:
-#                 landing_event_time = current_time  # Mark the time when landing was detected
-            
-#             if landing_event_time and current_time - landing_event_time >= 180:  # Timeout after 3 minutes
-#                 print("Timeout reached. Closing the file.")
-#                 break  # Exit the loop safely
-            
-#             # Perform logging at the specified interval
-#             if current_time - start_time >= interval:
-#                 # Format data into a string
-#                 data_str = (
-#                     f"{current_time:.2f},{shared_imu_data[0]:.2f},{shared_imu_data[1]:.2f},{shared_imu_data[2]:.2f},{shared_imu_data[3]:.2f},"
-#                     f"{shared_imu_data[4]:.2f},{shared_imu_data[5]:.2f},{shared_imu_data[6]:.2f},{shared_imu_data[7]:.2f},{shared_imu_data[8]:.2f},"
-#                     f"{shared_imu_data[9]:.2f},{shared_imu_data[10]:.2f},{shared_rf_data[0]:.2f},{shared_rf_data[1]:.2f},{shared_rf_data[2]:.2f},"
-#                     f"{shared_rf_data[3]:.2f},{shared_rf_data[8]:.0f},{shared_rf_data[9]:.0f},{shared_rf_data[10]:.0f},{shared_rf_data[11]:.2f},"
-#                     f"{shared_rf_data[12]:.2f},{apogee_reached.value:.2f},{current_velocity.value:.2f},{int(landedState.value)},{int(initialAltitudeAchieved.value)}\n"
-#                 )
-#                 # Write data to file
-#                 f.write(data_str)
-#                 f.flush()  # Ensure data is written immediately
-
-#                 # Update Max Velocity
-#                 if abs(current_velocity.value) >= abs(max_velocity.value):
-#                     max_velocity.value = current_velocity.value
-
-#                 start_time = current_time  # Update time step
-
-###############################################################################################################
-###############################################################################################################
-# def data_logging_process_test_2(shared_imu_data, shared_rf_data, initialAltitudeAchieved, landing_detected, apogee_reached, current_velocity, landedState):
-#     """
-#     Logging process with launch detection (based on initialAltitudeAchieved) and post-landing timeout.
-#     Logs pre-launch data (1-minute rolling buffer at 100 Hz) and post-launch data into separate files, then combines them with column headers.
-#     """
-#     # File names
-#     pre_file = "data_log_test_2_pre.txt"
-#     post_file = "data_log_test_2_post.txt"
-#     output_file = "data_log_test_2_combined.txt"
-
-#     # Rolling buffer for pre-launch data (1-minute rolling window at 100 Hz)
-#     rolling_buffer = deque(maxlen=6000)  # 6000 entries for 1 minute at 100 Hz
-#     target_frequency = 100  # Hz
-#     interval = 1 / target_frequency  # 10 ms
-
-#     start_time = time.perf_counter()
-#     last_logging_time = start_time  # To control logging frequency
-#     landing_event_time = None  # To track the time of landing detection
-
-#     print("Data logging process test 2 started.")
-
-#     with open(pre_file, "w") as pre_f, open(post_file, "w") as post_f:
-#         while True:
-#             current_time = time.perf_counter()  # Current time
-
-#             # Ensure consistent logging frequency
-#             if current_time - last_logging_time >= interval:
-#                 # Pre-launch logging (rolling buffer) until initialAltitudeAchieved is True
-#                 if not initialAltitudeAchieved.value:
-#                     # Collect data into rolling buffer
-#                     rolling_buffer.append(
-#                         f"{current_time:.2f},{shared_imu_data[0]:.2f},{shared_imu_data[1]:.2f},{shared_imu_data[2]:.2f},{shared_imu_data[3]:.2f},"
-#                         f"{shared_imu_data[4]:.2f},{shared_imu_data[5]:.2f},{shared_imu_data[6]:.2f},{shared_imu_data[7]:.2f},{shared_imu_data[8]:.2f},"
-#                         f"{shared_imu_data[9]:.2f},{shared_imu_data[10]:.2f},{shared_rf_data[0]:.2f},{shared_rf_data[1]:.2f},{shared_rf_data[2]:.2f},"
-#                         f"{shared_rf_data[3]:.2f},{apogee_reached.value:.2f},{current_velocity.value:.2f},{int(landedState.value)}\n"
-#                     )
-
-#                     # Write rolling buffer to pre-file
-#                     pre_f.seek(0)
-#                     pre_f.truncate()
-#                     pre_f.write("".join(rolling_buffer))
-#                     pre_f.flush()
-#                 else:
-#                     # Start continuous logging after launch detection
-#                     post_f.write(
-#                         f"{current_time:.2f},{shared_imu_data[0]:.2f},{shared_imu_data[1]:.2f},{shared_imu_data[2]:.2f},{shared_imu_data[3]:.2f},"
-#                         f"{shared_imu_data[4]:.2f},{shared_imu_data[5]:.2f},{shared_imu_data[6]:.2f},{shared_imu_data[7]:.2f},{shared_imu_data[8]:.2f},"
-#                         f"{shared_imu_data[9]:.2f},{shared_imu_data[10]:.2f},{shared_rf_data[0]:.2f},{shared_rf_data[1]:.2f},{shared_rf_data[2]:.2f},"
-#                         f"{shared_rf_data[3]:.2f},{apogee_reached.value:.2f},{current_velocity.value:.2f},{int(landedState.value)}\n"
-#                     )
-#                     post_f.flush()
-
-#                     # Check for landing event
-#                     if landing_detected.value and landing_event_time is None:
-#                         landing_event_time = current_time
-#                         print("Landing detected. Starting post-landing timeout.")
-
-#                     # Timeout after 3 minutes post-landing
-#                     if landing_event_time and current_time - landing_event_time >= RF_TIMEOUT:
-#                         print("Timeout reached. Stopping logging process.")
-#                         break
-
-#                 # Update the last logging time
-#                 last_logging_time = current_time
-
-#     # Combine pre and post files
-#     combine_files(pre_file, post_file, output_file)
-#     print(f"Data logging completed. Logs combined into {output_file}")
-
-
-# def combine_files(pre_file, post_file, output_file):
-#     """
-#     Combine pre_file and post_file into a single output file, with column headers added.
-#     """
-#     # Define column headers
-#     headers = "Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,rf_data_1,rf_data_2,rf_data_3,rf_data_4,apogee_reached,current_velocity,landedState\n"
-
-#     with open(output_file, "w") as out_f:
-#         # Write headers to the output file
-#         out_f.write(headers)
-
-#         # Add contents of the pre-file if it exists
-#         if os.path.exists(pre_file):
-#             with open(pre_file, "r") as pre_f:
-#                 out_f.write(pre_f.read())
-
-#         # Add contents of the post-file if it exists
-#         if os.path.exists(post_file):
-#             with open(post_file, "r") as post_f:
-#                 out_f.write(post_f.read())
-
-#     print(f"Combined files into {output_file} with column headers added.")
-
-###################################################################################################################
-import multiprocessing
-import signal
-import lgpio
-import sys
-import time
 
 # Global list to track processes
 processes = []
@@ -637,5 +510,7 @@ if __name__ == "__main__":
         while True:
             detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
             print(f"Altitude: {shared_imu_data[9]:.2f} m, Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, Landing Detected: {landing_detected.value}, Detection Time: {detection_time}")
+            # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
+    
     except KeyboardInterrupt:
         cleanup(signal.SIGINT, None)  # Handle Ctrl+C gracefully
