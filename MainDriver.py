@@ -21,18 +21,18 @@ import sys
 
 
 # # Test Use
-landingAccMagThreshold = 25 # m/s^2
-groundLevel = 4.66 # M
-initialAltitudeThreshold = groundLevel -20
-landingAltitudeThreshold = groundLevel + 10
+landingAccMagThreshold = 30 # m/s^2
+groundLevel = 7.25 # M
+initialAltitudeThreshold = groundLevel + 25
+landingAltitudeThreshold = groundLevel + 20
 
 
 # Timeout tracking variables
-LOW_ALTITUDE_TIMEOUT = 10
-RF_TIMEOUT = 120 # Default 300s = 5 Min
+LOW_ALTITUDE_TIMEOUT = 60
+RF_TIMEOUT = 300 # Default 300s = 5 Min
 SERVO_WAIT_TIME = 10 # Default 10s
-# LOGGER_TIMEOUT = 60
-# LOGGER_BUFFER = 2 * 60 * 100 # 2 x 60 minutes, at 100 Hz
+LOGGER_TIMEOUT = 180
+LOGGER_BUFFER = 12000 # 2 minutes x 60 seconds/min x 100 Hz
 
 # Temperature Offser
 tOffset = -6
@@ -351,7 +351,7 @@ def release_latch_servo(servo, landing_detected):
             while True:
                 if stop_requested.value:
                             break
-                
+
                 current_time = time.perf_counter()            
                 
                 if current_time - start_time >= SERVO_WAIT_TIME and not servo_moved:
@@ -373,24 +373,32 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
+    # File names
+    pre_file = "data_log_pre.txt"
+    post_file = "data_log_post.txt"
+    output_file = "data_log_combined.txt"
+    # Rolling buffer for pre-launch data (2-minute rolling window at 100 Hz)
+    rolling_buffer = deque(maxlen=LOGGER_BUFFER)  # 12000 entries for 2 minutes at 100 Hz
     target_frequency = 100  # Hz
-    interval = 1 / target_frequency  # Seconds (10ms for 100Hz)
+    interval = 1 / target_frequency  # 10 ms
     start_time = time.perf_counter()
+    last_logging_time = start_time  # To control logging frequency
+    landing_event_time = None  # To track the time of landing detection
 
-    time.sleep(5)
+    print("Data logging process test 2 started.")
 
-    # Write header once before entering the loop
-    with open("data_log.txt", "w") as f:
-        f.write("Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,current_velocity,landedState,initialAltitudeAchieved\n")
+    # Clear post file at the start to avoid appending old data
+    with open(post_file, "w") as post_f:
+        pass  # Just open and close to truncate the file
 
     while True:
         if stop_requested.value:
             break
 
-        current_time = time.perf_counter()  # Update time
+        current_time = time.perf_counter()  # Current time
 
-        if current_time - start_time >= interval:
-            # Format data into a string
+        # Ensure consistent logging frequency
+        if current_time - last_logging_time >= interval:
             data_str = (
                 f"{current_time:.2f},"               # 1  Time
                 f"{shared_imu_data[0]:.2f},"         # 2  Q_w
@@ -419,14 +427,48 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
                 f"{int(initialAltitudeAchieved.value)}\n"  # 23 initialAltitudeAchieved
             )
 
+            if not initialAltitudeAchieved.value:
+                rolling_buffer.append(data_str)
+                with open(pre_file, "w") as pre_f:
+                    pre_f.write("".join(rolling_buffer))
+                    pre_f.flush()
+            else:
+                with open(post_file, "a") as post_f:
+                    post_f.write(data_str)
+                    post_f.flush()
 
+                if landing_detected.value and landing_event_time is None:
+                    landing_event_time = current_time
+                    print("Landing detected. Starting post-landing timeout.")
 
-            # Open file, write data, flush, and close
-            with open("data_log.txt", "a") as f:
-                f.write(data_str)
-                f.flush()  # Ensure data is written immediately
+                if landing_event_time and current_time - landing_event_time >= LOGGER_TIMEOUT:
+                    print("Timeout reached. Stopping logging process.")
+                    break
 
-            start_time = current_time  # Update time step
+            last_logging_time = current_time
+
+    combine_files(pre_file, post_file, output_file)
+    print(f"Data logging completed. Logs combined into {output_file}")
+
+def combine_files(pre_file, post_file, output_file):
+    """
+    Combine pre_file and post_file into a single output file, with column headers added.
+    """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+    headers = "Time,Q_w,Q_x,Q_y,Q_z,a_x,a_y,a_z,temperature,pressure,altitude,accel_magnitude,apogee,battery_percentage,survivability_percentage,detection_time_H,detection_time_M,detection_time_S,max_velocity,landing_velocity,current_velocity,landedState,initialAltitudeAchieved\n"
+
+    with open(output_file, "w") as out_f:
+        out_f.write(headers)
+        
+        if os.path.exists(pre_file):
+            with open(pre_file, "r") as pre_f:
+                out_f.write(pre_f.read())
+
+        if os.path.exists(post_file):
+            with open(post_file, "r") as post_f:
+                out_f.write(post_f.read())
 
 def update_velocity_process(shared_imu_data, landing_detected):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -572,9 +614,11 @@ if __name__ == "__main__":
             detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
             print(
                 f"Altitude: {shared_imu_data[9]:.2f} m, "
-                f"Acceleration Magnitude: {shared_imu_data[10]:.2f} m/s^2, "
-                f"Landing Detected: {landing_detected.value}, "
-                f"Detection Time: {detection_time}"
+                f"Acc Mag: {shared_imu_data[10]:.2f} m/s^2, "
+                f"Qw: {shared_imu_data[0]:.2f}, "
+                f"Launch: {initialAltitudeAchieved.value}, "
+                f"Land: {landing_detected.value}, "
+                f"Time: {detection_time}"
             )
             # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
             
