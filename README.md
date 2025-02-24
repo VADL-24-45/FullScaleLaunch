@@ -23,8 +23,8 @@
 
 ## General Steps to Connect
 
-1. **Open your web browser** and navigate to `http://192.168.8.1/`
-   - **Router Password**: `VADL123456`
+1. **Open your web browser** and navigate to `---`
+   - **Router Password**: `---`
 2. **Find the Raspberry Pi’s IP Address**  
    - Within the router interface, locate **Devices** or **Connected Devices** to see a list of connected clients.  
    - Look for the device named **Raspberry Pi** and note its IP address (e.g., `192.168.8.xxx`).
@@ -34,7 +34,7 @@
    - In the **bottom-left corner** of VS Code, click the “><” icon (or open **Remote Explorer**).  
    - Select **“Connect to Host…”**.  
    - Enter: `RPI4@[IP Address]` (substitute `[IP Address]` with the actual IP, e.g., `192.168.8.xxx`).  
-   - When prompted for a password, use: `123`.
+   - When prompted for a password, use: `---`.
 5. **Open the IMU Folder**  
    - In VS Code’s File Explorer, open the directory:  
      ```
