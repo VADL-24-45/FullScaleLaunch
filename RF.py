@@ -17,7 +17,8 @@ class I2CSender:
             self.bus.write_i2c_block_data(self.addr, 0, list(byte_data))  # Send float data as bytes
         except OSError as e:
             if e.errno == 121:  # Catch Remote I/O error (Errno 121)
-                print("I/O error occurred, skipping this transmission.")
+                # print("I/O error occurred, skipping this transmission.")
+                pass
 
     # Function to start the sending process if active is True
     def monitor_and_send(self, float_data):
