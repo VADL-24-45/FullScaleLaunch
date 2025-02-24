@@ -12,30 +12,31 @@ import os
 from collections import deque
 import signal
 import sys
+from Battery import ADS1115
 
 # Threshold values (Flight Use)
-# landingAccMagThreshold = 30  # m/s^2
-# groundLevel = 150 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-# initialAltitudeThreshold = groundLevel + 25 # This need to be larger
-# landingAltitudeThreshold = groundLevel + 20
+landingAccMagThreshold = 30  # m/s^2
+groundLevel = 65 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+initialAltitudeThreshold = groundLevel + 40 # This need to be larger
+landingAltitudeThreshold = groundLevel + 30
 
 
-# # Test Use
-landingAccMagThreshold = 30 # m/s^2
-groundLevel = 7.25 # M
-initialAltitudeThreshold = groundLevel + 25
-landingAltitudeThreshold = groundLevel + 20
+# Test Use
+# landingAccMagThreshold = 1000  # m/s^2
+# groundLevel = 46.56 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+# initialAltitudeThreshold = groundLevel - 40 
+# landingAltitudeThreshold = groundLevel + 30
 
 
 # Timeout tracking variables
-LOW_ALTITUDE_TIMEOUT = 60
-RF_TIMEOUT = 300 # Default 300s = 5 Min
+LOW_ALTITUDE_TIMEOUT = 60 # Default to 60
+RF_TIMEOUT = 280 # Default 300s = 5 Min
 SERVO_WAIT_TIME = 10 # Default 10s
 LOGGER_TIMEOUT = 180
 LOGGER_BUFFER = 12000 # 2 minutes x 60 seconds/min x 100 Hz
 
 # Temperature Offser
-tOffset = -6
+tOffset = -10.11
 
 # Servo Angle
 servoStartAngle = 0
@@ -105,8 +106,8 @@ def imu_data_process(imu, shared_data):
             # print(shared_data[8])
 
             # Update apogee if the current altitude is higher than the recorded apogee
-            if altitude > apogee_reached.value:
-                apogee_reached.value = altitude
+            if altitude - groundLevel > apogee_reached.value:
+                apogee_reached.value = altitude - groundLevel
 
             # Calculate acceleration magnitude and update shared data
             accel_magnitude = math.sqrt(shared_data[4] ** 2 + shared_data[5] ** 2 + shared_data[6] ** 2)
@@ -342,7 +343,6 @@ def release_latch_servo(servo, landing_detected):
             action_triggered = True  # Set the flag
             # servo.set_servo_angle(servoEndAngle)  # Servo
             lgpio.gpio_write(GPIO_ENABLE, 19, 1)  # Latch
-            lgpio.gpio_write(GPIO_ENABLE, 17, 1)  # RF
             # print("RF Enabled")
             # Wait for 5 minutes (300 seconds) and turn off RF
             start_time = time.perf_counter()
@@ -355,7 +355,8 @@ def release_latch_servo(servo, landing_detected):
                 current_time = time.perf_counter()            
                 
                 if current_time - start_time >= SERVO_WAIT_TIME and not servo_moved:
-                    servo.set_servo_angle(servoEndAngle)
+                    servo.set_servo_angle(servoEndAngle) # Extend Antenna
+                    lgpio.gpio_write(GPIO_ENABLE, 17, 1)  # RF
                     servo_moved = True
 
                 if current_time - start_time >= RF_TIMEOUT:
@@ -524,6 +525,31 @@ def update_velocity_process(shared_imu_data, landing_detected):
             # Reset the time step
             start_time = current_time
 
+def update_battery_process(battry_percentage):
+    # Ignore SIGINT and SIGTERM in this process
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+    interval = 1
+    start_time = time.perf_counter()
+    battery = ADS1115(i2c_bus=6, device_address=0x48)
+    lowest_battery_percent = 100
+ 
+    while True:
+        if stop_requested.value:
+            break
+
+        current_time = time.perf_counter()
+        if current_time - start_time >= interval:
+            battery_percentage_local = battery.battery_voltage_to_percentage(battery.calc_vbat(battery.get_adc()))
+
+            if battery_percentage_local <= lowest_battery_percent:
+                lowest_battery_percent = battery_percentage_local
+
+            battry_percentage.value = lowest_battery_percent
+            start_time = current_time
+
+
 def signal_handler(signum, frame):
     """
     Minimal signal handler that sets a global 'stop' flag
@@ -597,7 +623,8 @@ if __name__ == "__main__":
             shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved
         )),
         multiprocessing.Process(target=release_latch_servo, args=(servo, landing_detected,)),
-        multiprocessing.Process(target=update_velocity_process, args=(shared_imu_data, landing_detected,))
+        multiprocessing.Process(target=update_velocity_process, args=(shared_imu_data, landing_detected,)),
+        multiprocessing.Process(target=update_battery_process, args=(battry_percentage,))
     ])
 
     # Start all processes
@@ -613,11 +640,13 @@ if __name__ == "__main__":
         while True:
             detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
             print(
-                f"Altitude: {shared_imu_data[9]:.2f} m, "
+                f"Alt: {shared_imu_data[9]:.2f} m, "
                 f"Acc Mag: {shared_imu_data[10]:.2f} m/s^2, "
                 f"Qw: {shared_imu_data[0]:.2f}, "
                 f"Launch: {initialAltitudeAchieved.value}, "
                 f"Land: {landing_detected.value}, "
+                f"Bat: {battry_percentage.value:.2f}%, "
+                f"Temp: {shared_rf_data[0]:.2f}C, "
                 f"Time: {detection_time}"
             )
             # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
