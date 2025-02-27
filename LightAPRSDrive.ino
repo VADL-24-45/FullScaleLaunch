@@ -126,11 +126,13 @@ void sendStatus(int group) {
     case 0:
       // Construct the status buffer for floats 1-4: "T: float1, A: float2, B: float3, S: float4"
       strcat(status_buff, "T:");
-      dtostrf(receivedFloats[0], 3, 2, floatStr);
+      // dtostrf(receivedFloats[0], 3, 2, floatStr);
+      dtostrf(receivedFloats[0] * 9.0 / 5.0 + 32, 3, 2, floatStr);  // Convert °C to °F
       strcat(status_buff, floatStr);
 
       strcat(status_buff, " A:");
-      dtostrf(receivedFloats[1], 3, 2, floatStr);
+      // dtostrf(receivedFloats[1], 3, 2, floatStr);
+      dtostrf(receivedFloats[1] * 3.28084, 3, 2, floatStr);  // Convert meters to feet
       strcat(status_buff, floatStr);
 
       strcat(status_buff, " B:");
@@ -180,11 +182,13 @@ void sendStatus(int group) {
     case 3:
       // Construct the status buffer for floats 12-13: "MaxV: float12, LV: float13"
       strcat(status_buff, "MaxV:");
-      dtostrf(receivedFloats[11], 3, 2, floatStr);
+      // dtostrf(receivedFloats[11], 3, 2, floatStr);
+      dtostrf(receivedFloats[11] * 3.28084, 3, 2, floatStr);  // Convert m/s to fps
       strcat(status_buff, floatStr);
 
       strcat(status_buff, " LV:");
-      dtostrf(receivedFloats[12], 3, 2, floatStr);
+      // dtostrf(receivedFloats[12], 3, 2, floatStr);
+      dtostrf(receivedFloats[12] * 3.28084, 3, 2, floatStr);  // Convert m/s to fps
       strcat(status_buff, floatStr);
       break;
   }
