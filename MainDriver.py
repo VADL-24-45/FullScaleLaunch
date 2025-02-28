@@ -13,23 +13,26 @@ from collections import deque
 import signal
 import sys
 from Battery import ADS1115
+import numpy as np
+from scipy.interpolate import interp1d
+from DRI import DRI
 
 # Threshold values (Flight Use)
-landingAccMagThreshold = 30  # m/s^2
-groundLevel = 65 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-initialAltitudeThreshold = groundLevel + 40 # This need to be larger
-landingAltitudeThreshold = groundLevel + 30
-
-
-# Test Use
-# landingAccMagThreshold = 1000  # m/s^2
-# groundLevel = 46.56 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-# initialAltitudeThreshold = groundLevel - 40 
+# landingAccMagThreshold = 30  # m/s^2
+# groundLevel = 65 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+# initialAltitudeThreshold = groundLevel + 40 # This need to be larger
 # landingAltitudeThreshold = groundLevel + 30
 
 
+# Test Use
+landingAccMagThreshold = 10000 # m/s^2
+groundLevel = 166 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+initialAltitudeThreshold = groundLevel - 40 
+landingAltitudeThreshold = groundLevel + 30
+
+
 # Timeout tracking variables
-LOW_ALTITUDE_TIMEOUT = 60 # Default to 60
+LOW_ALTITUDE_TIMEOUT = 5 # Default to 60
 RF_TIMEOUT = 280 # Default 300s = 5 Min
 SERVO_WAIT_TIME = 10 # Default 10s
 LOGGER_TIMEOUT = 180
@@ -195,61 +198,80 @@ def survivability_process(shared_data, survivability_percentage):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
-    # Constants
-    omega = 52.90  # lumped spinal frequency (rad/s)
-    zeta = 0.224  # damping ratio
-    g = 9.81  # acceleration on Earth
-    max_DRI = 17.7
+    target_frequency = 100  # Hz
+    interval = 1 / target_frequency  # 10 ms
+    start_time = time.perf_counter()
+    last_logging_time = start_time
+    landing_time = time.perf_counter()
+    time_wait_DRI = 5
+    terminate_recording = False
+    landing_time_set = False
 
-    # Initial values
-    X = 0.0  # relative spinal deflection
-    X_dot = 0.0  # relative spinal velocity
-    X_max = 0.0  # maximum spinal compression
+    omega_n = 52.9 # natural frequency rad/s
+    zeta    = 0.224 # damping ratio
+    DRI_calculated = False
+    DR_val = 0
 
-    last_time = time.time()
+    Time = deque()
+    Accel = deque()
+    DRI_calculator = DRI()
 
     while True:
         if stop_requested.value:
             break
 
-        current_time = time.time()
-        dt = current_time - last_time
-        last_time = current_time
+        # 100 Hz Loop
+        current_time = time.perf_counter() 
+        if current_time - last_logging_time >= interval:
+            # Select Axis Here
+            # shared_data[4] = imu.currentData.a_x
+            # shared_data[5] = imu.currentData.a_y
+            # shared_data[6] = imu.currentData.a_z       
+            altitude = shared_data[9]
+            acceleration = shared_data[6]
 
-        # Use calculated acceleration magnitude from shared data
-        z_ddot = shared_data[6] + 9.18
-        z_ddot = abs(z_ddot)
-        # print(z_ddot)
-        
-        # Calculate the spinal acceleration (X_ddot)
-        X_ddot = z_ddot - (2 * zeta * omega * X_dot) - (pow(omega, 2) * X)
-        # print(X_ddot)
+            if landedState.value and not landing_time_set:
+                landing_time = time.perf_counter()
+                landing_time_set = True
+            
+            if landedState.value and current_time - landing_time > time_wait_DRI:
+                terminate_recording = True
 
-        # Update velocity using Euler's Method
-        X_dot += X_ddot * dt
-        X += X_dot * dt
-        # print(X)
+            # State 1: Recording Before Landing on Falling
+            if initialAltitudeAchieved.value and altitude < landingAltitudeThreshold and not terminate_recording and not DRI_calculated:
+                # Record data
+                Time.append(time.perf_counter())
+                Accel.append(acceleration) # Z-Axis Acceleration
 
-        # max displacement updating
-        if abs(X) > X_max:
-            X_max = abs(X)
-        
-        # Calculate DRI and survivability percentage
-        cur_DRI = (pow(omega, 2) / g) * X_max  # calculated DRI given X_max
-        # print(cur_DRI)
+                # Stop recording after landing detected
+                
+            # State 2: Calculating DRIs and Survivability Data
+            elif terminate_recording and not DRI_calculated:
+                if len(Time) > 2: # Prevent Failure
+                    reconstructed_time = np.linspace(Time[0], Time[-1], len(Time))
+                    f_linear = interp1d(Time, Accel, kind='linear', fill_value="extrapolate")
+                    cropped_accelX_resampled = f_linear(reconstructed_time)
 
-        # survive_percentage = (max_DRI - abs(cur_DRI)) / max_DRI * 100  # converts DRI value to percentage based on max allowable DRI
-        if cur_DRI <= max_DRI:
-            survivability_percentage.value = 100
-        else:
-            survivability_percentage.value = 80
+                    DR_arr = DRI_calculator.calc_DRI(reconstructed_time, cropped_accelX_resampled, omega_n, zeta)
 
-        if cur_DRI >= (max_DRI * 2):
-            survivability_percentage.value = 50
+                    DR_val = np.max(np.abs(DR_arr))
+                
+                    print("DRI value:", DR_val)
 
+                    # Classification
+                    if DR_val <= 17.7:
+                        print("Low")
+                    elif DR_val <= 21:
+                        print("Medium")
+                    else:
+                        print("High")
 
-        # Update the shared survivability_percentage value
-        # survivability_percentage.value = survive_percentage
+                DRI_calculated = True
+            
+            # Update time
+            last_logging_time = current_time
+
+        survivability_percentage.value = DR_val    
 
 
 def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_time, shared_rf_data, apogee_reached, battry_percentage, survivability_percentage, max_velocity, landing_velocity):
@@ -650,7 +672,7 @@ if __name__ == "__main__":
                 f"Time: {detection_time}"
             )
             # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
-            
+
             # Catch Exit
             if stop_requested.value:
                 # If signaled, do real cleanup and exit
