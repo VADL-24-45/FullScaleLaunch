@@ -18,28 +18,38 @@ from scipy.interpolate import interp1d
 from DRI import DRI
 
 # Threshold values (Flight Use)
-# landingAccMagThreshold = 30  # m/s^2
-# groundLevel = 65 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-# initialAltitudeThreshold = groundLevel + 40 # This need to be larger
-# landingAltitudeThreshold = groundLevel + 30
-
-
-# Test Use
-landingAccMagThreshold = 10000 # m/s^2
-groundLevel = 166 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-initialAltitudeThreshold = groundLevel - 40 
+landingAccMagThreshold = 40  # m/s^2
+groundLevel = 203.54 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+initialAltitudeThreshold = groundLevel + 35 # This need to be larger
 landingAltitudeThreshold = groundLevel + 30
 
-
-# Timeout tracking variables
-LOW_ALTITUDE_TIMEOUT = 5 # Default to 60
-RF_TIMEOUT = 280 # Default 300s = 5 Min
-SERVO_WAIT_TIME = 10 # Default 10s
-LOGGER_TIMEOUT = 180
-LOGGER_BUFFER = 12000 # 2 minutes x 60 seconds/min x 100 Hz
+# # Timeout tracking variables (Flight Use)
+# LOW_ALTITUDE_TIMEOUT = 60 # Default to 60
+# RF_TIMEOUT = 280 # Default about 300s = 5 Min
+# SERVO_WAIT_TIME = 10 # Default 10s
+# LOGGER_TIMEOUT = 180
+# LOGGER_BUFFER = 12000 # 2 minutes x 60 seconds/min x 100 Hz
 
 # Temperature Offser
 tOffset = -10.11
+
+###############################################################################
+
+# Test Use
+# landingAccMagThreshold = 10000 # m/s^2
+# groundLevel = 166 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+# initialAltitudeThreshold = groundLevel - 40 
+# landingAltitudeThreshold = groundLevel + 30
+
+# Timeout tracking variables
+LOW_ALTITUDE_TIMEOUT = 1000 # Default to 60
+RF_TIMEOUT = 60 # Default 300s = 5 Min
+SERVO_WAIT_TIME = 10 # Default 10s
+LOGGER_TIMEOUT = 20
+LOGGER_BUFFER = 3000 # 2 minutes x 60 seconds/min x 100 Hz
+
+###############################################################################
+# INVARIANTS
 
 # Servo Angle
 servoStartAngle = 0
@@ -203,7 +213,7 @@ def survivability_process(shared_data, survivability_percentage):
     start_time = time.perf_counter()
     last_logging_time = start_time
     landing_time = time.perf_counter()
-    time_wait_DRI = 5
+    time_wait_DRI = 10
     terminate_recording = False
     landing_time_set = False
 
@@ -660,17 +670,17 @@ if __name__ == "__main__":
 
     try:
         while True:
-            detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
-            print(
-                f"Alt: {shared_imu_data[9]:.2f} m, "
-                f"Acc Mag: {shared_imu_data[10]:.2f} m/s^2, "
-                f"Qw: {shared_imu_data[0]:.2f}, "
-                f"Launch: {initialAltitudeAchieved.value}, "
-                f"Land: {landing_detected.value}, "
-                f"Bat: {battry_percentage.value:.2f}%, "
-                f"Temp: {shared_rf_data[0]:.2f}C, "
-                f"Time: {detection_time}"
-            )
+            # detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
+            # print(
+            #     f"Alt: {shared_imu_data[9]:.2f} m, "
+            #     f"Acc Mag: {shared_imu_data[10]:.2f} m/s^2, "
+            #     f"Qw: {shared_imu_data[0]:.2f}, "
+            #     f"Launch: {initialAltitudeAchieved.value}, "
+            #     f"Land: {landing_detected.value}, "
+            #     f"Bat: {battry_percentage.value:.2f}%, "
+            #     f"Temp: {shared_rf_data[0]:.2f}C, "
+            #     f"Time: {detection_time}"
+            # )
             # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
 
             # Catch Exit
