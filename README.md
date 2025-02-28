@@ -104,4 +104,16 @@
 
 **End of Procedure**  
 _These instructions have been provided in good faith to assist with Operation. The user/operator remains fully responsible for the safe handling and operation of all software and hardware components._
+
+
+# Dependencies
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3-dev python3-pip python3-venv \
+    libblas-dev liblapack-dev gfortran \
+    libatlas-base-dev libgfortran5
+sudo apt install -y python3-numpy python3-scipy python3-pandas
+sudo pip3 install control --break-system-packages
+
 ```
+
+
