@@ -18,15 +18,15 @@ from scipy.interpolate import interp1d
 from DRI import DRI
 
 # Threshold values (Flight Use)
-landingAccMagThreshold = 40  # m/s^2
-groundLevel = 203.54 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-initialAltitudeThreshold = groundLevel + 35 # This need to be larger
-landingAltitudeThreshold = groundLevel + 30
+# landingAccMagThreshold = 30  # m/s^2 30
+# groundLevel = 203.54 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+# initialAltitudeThreshold = groundLevel + 35 # This need to be larger
+# landingAltitudeThreshold = groundLevel + 30
 
 # # Timeout tracking variables (Flight Use)
 # LOW_ALTITUDE_TIMEOUT = 60 # Default to 60
 # RF_TIMEOUT = 280 # Default about 300s = 5 Min
-# SERVO_WAIT_TIME = 10 # Default 10s
+# SERVO_WAIT_TIME = 15 # Default 15s
 # LOGGER_TIMEOUT = 180
 # LOGGER_BUFFER = 12000 # 2 minutes x 60 seconds/min x 100 Hz
 
@@ -36,15 +36,15 @@ tOffset = -10.11
 ###############################################################################
 
 # Test Use
-# landingAccMagThreshold = 10000 # m/s^2
-# groundLevel = 166 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-# initialAltitudeThreshold = groundLevel - 40 
-# landingAltitudeThreshold = groundLevel + 30
+landingAccMagThreshold = 10000 # m/s^2
+groundLevel = 200 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+initialAltitudeThreshold = groundLevel - 40 
+landingAltitudeThreshold = groundLevel + 30
 
 # Timeout tracking variables
-LOW_ALTITUDE_TIMEOUT = 1000 # Default to 60
-RF_TIMEOUT = 60 # Default 300s = 5 Min
-SERVO_WAIT_TIME = 10 # Default 10s
+LOW_ALTITUDE_TIMEOUT = 5 # Default to 60
+RF_TIMEOUT = 120 # Default 300s = 5 Min
+SERVO_WAIT_TIME = 15 # Default 10s
 LOGGER_TIMEOUT = 20
 LOGGER_BUFFER = 3000 # 2 minutes x 60 seconds/min x 100 Hz
 
