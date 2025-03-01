@@ -2,7 +2,6 @@ import multiprocessing
 import ctypes
 import time
 import math
-import zmq
 import numpy as np
 from VN100 import VN100IMU, IMUData  # Assuming VN100IMU class and IMUData dataclass are available
 from RF import I2CSender
@@ -16,6 +15,9 @@ from Battery import ADS1115
 import numpy as np
 from scipy.interpolate import interp1d
 from DRI import DRI
+
+PRINT_MODE = True
+PRINT_FREQUENCY = 10
 
 # Threshold values (Flight Use)
 # landingAccMagThreshold = 30  # m/s^2 30
@@ -37,7 +39,7 @@ tOffset = -10.11
 
 # Test Use
 landingAccMagThreshold = 10000 # m/s^2
-groundLevel = 200 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+groundLevel = 151 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
 initialAltitudeThreshold = groundLevel - 40 
 landingAltitudeThreshold = groundLevel + 30
 
@@ -418,7 +420,7 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
     last_logging_time = start_time  # To control logging frequency
     landing_event_time = None  # To track the time of landing detection
 
-    print("Data logging process test 2 started.")
+    print("Data logging process started.")
 
     # Clear post file at the start to avoid appending old data
     with open(post_file, "w") as post_f:
@@ -669,19 +671,31 @@ if __name__ == "__main__":
 
 
     try:
+        target_frequency = PRINT_FREQUENCY  # Hz
+        interval = 1 / target_frequency  
+        start_time = time.perf_counter()
+
         while True:
-            # detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
-            # print(
-            #     f"Alt: {shared_imu_data[9]:.2f} m, "
-            #     f"Acc Mag: {shared_imu_data[10]:.2f} m/s^2, "
-            #     f"Qw: {shared_imu_data[0]:.2f}, "
-            #     f"Launch: {initialAltitudeAchieved.value}, "
-            #     f"Land: {landing_detected.value}, "
-            #     f"Bat: {battry_percentage.value:.2f}%, "
-            #     f"Temp: {shared_rf_data[0]:.2f}C, "
-            #     f"Time: {detection_time}"
-            # )
-            # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
+            # Printing at lower frequency
+            current_time = time.perf_counter()
+            if current_time - start_time >= interval and PRINT_MODE:
+                # Print Ver 1
+                detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
+                print(
+                    f"Alt: {shared_imu_data[9]:.2f} m, "
+                    f"Acc Mag: {shared_imu_data[10]:.2f} m/s^2, "
+                    f"Qw: {shared_imu_data[0]:.2f}, "
+                    f"Launch: {initialAltitudeAchieved.value}, "
+                    f"Land: {landing_detected.value}, "
+                    f"Bat: {battry_percentage.value:.2f}%, "
+                    f"Temp: {shared_rf_data[0]:.2f}C, "
+                    f"Time: {detection_time}"
+                )
+
+                # Print Ver 2
+                # print("RF Shared Data: " + ", ".join(f"{value:.2f}" for value in shared_rf_data))
+                
+                start_time = current_time
 
             # Catch Exit
             if stop_requested.value:
