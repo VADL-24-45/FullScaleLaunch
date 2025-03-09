@@ -120,6 +120,13 @@ class VN100IMU:
             print(f"{data.Q_w:.4f}, {data.Q_x:.4f}, {data.Q_y:.4f}, {data.Q_z:.4f}, "
                   f"{data.a_x:.4f}, {data.a_y:.4f}, {data.a_z:.4f}, "
                   f"{data.temperature:.4f} °C, {data.pressure:.4f} hPa")
+            
+    def __del__(self):
+        """Destructor to ensure serial connection is closed properly."""
+        if self.serialConnection and self.serialConnection.is_open:
+            print("Closing serial connection...")
+            self.serialConnection.close()
+
 
 # Usage example
 if __name__ == "__main__":
