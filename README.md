@@ -115,5 +115,5 @@ sudo apt install -y python3-numpy python3-scipy python3-pandas
 sudo pip3 install control --break-system-packages
 
 ```
-
+https://stackoverflow.com/questions/70123431/why-would-ch341-uart-be-disconnected-from-ttyusb
 
