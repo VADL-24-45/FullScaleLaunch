@@ -65,7 +65,7 @@ processes = []
 
 # Shared data structure for IMU data (using Array for faster access)
 shared_imu_data = multiprocessing.Array(ctypes.c_double, 11)  # Array for Q_w, Q_x, Q_y, Q_z, a_x, a_y, a_z, temperature, pressure, altitude, accel_magnitude
-shared_rf_data = multiprocessing.Array(ctypes.c_double, 13) # temperature, apogee, battry_percentage, survivability_percentage, Q_w, Q_x, Q_y, Q_z, detection_time_H, detection_time_M, detection_time_S, max_velocity, landing_velocity
+shared_rf_data = multiprocessing.Array(ctypes.c_double, 14) # temperature, apogee, battry_percentage, survivability_percentage, Q_w, Q_x, Q_y, Q_z, detection_time_H, detection_time_M, detection_time_S, max_velocity, landing_velocity, landing_acceleration
 
 # Shared values for landing detection and survivability
 landing_detected = multiprocessing.Value(ctypes.c_bool, False)  # Boolean for landing detection
@@ -297,6 +297,7 @@ def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_
     landed_velocity_set = False
     landing_velocity.value = 0
     max_velocity.value = 0
+    landing_accel = 0
     start_time = time.perf_counter()
     velocity_ready_flag = False
 
@@ -316,6 +317,16 @@ def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_
 
         if velocity_ready_flag and abs(current_velocity.value) >= abs(max_velocity.value):
             max_velocity.value = abs(current_velocity.value)
+
+
+        '''
+        f"{shared_imu_data[4]:.2f},"         # 6  a_x
+        f"{shared_imu_data[5]:.2f},"         # 7  a_y
+        f"{shared_imu_data[6]:.2f},"         # 8  a_z`
+        '''
+        if initialAltitudeAchieved.value and abs(shared_imu_data[4]) > landing_accel:
+            landing_accel = abs(shared_imu_data[4])
+            shared_rf_data[13] = landing_accel  # Landing acceleration
         
         # Update RF data based on shared IMU data and other shared values
         shared_rf_data[0] = shared_imu_data[7]  # Temperature from IMU data
