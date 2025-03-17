@@ -48,6 +48,6 @@ if __name__ == "__main__":
 
     # Replace this with actual message data to be sent
     while True:
-        message_data = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.10, 11.11, 12.12, 13.13]  # Example float data
+        message_data = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.10, 11.11, 12.12, 13.13, -999]  # Example float data
         sender.monitor_and_send(message_data)
         time.sleep(0.5)  # Delay between sets of transmissions
