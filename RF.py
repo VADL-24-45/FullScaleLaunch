@@ -31,7 +31,7 @@ class I2CSender:
             # Send the end marker
             self.send_float(self.end_marker)
             # print("End marker sent")
-            time.sleep(0.1)  # Small delay after sending end marker
+            time.sleep(0.5)  # Small delay after sending end marker
 
     # Function to set the active status
     def set_active(self, status):
@@ -48,6 +48,6 @@ if __name__ == "__main__":
 
     # Replace this with actual message data to be sent
     while True:
-        message_data = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.10, 11.11, 12.12, 13.13]  # Example float data
+        message_data = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.10, 11.11, 12.12, 13.13, 14, -999]  # Example float data
         sender.monitor_and_send(message_data)
         time.sleep(0.5)  # Delay between sets of transmissions
