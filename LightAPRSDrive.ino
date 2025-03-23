@@ -26,12 +26,12 @@ char CallSign[7] = "KQ4VKK";
 int CallNumber = 11;
 char Symbol = 'O';
 char StatusMessage[50] = "Vanderbilt VADL Test Message";
-unsigned int BeaconWait = 10;
+unsigned int BeaconWait = 20;
 uint16_t TxCount = 1;
 int ENABLE = 0; // Enable
 
-float receivedFloats[13];  // Buffer to store the 13 received floats
-int floatCount = 0;       // Count of received floats
+float receivedFloats[14];  // Buffer to store the 14 received floats
+int floatCount = 0;        // Count of received floats
 const float END_MARKER = -999.0;
 
 void setup() {
@@ -55,13 +55,20 @@ void setup() {
   APRS_setPath2("WIDE2", 1);
   APRS_setSymbol(Symbol);
   APRS_setPreamble(350UL);
+
+  for (int i = 0; i < 14; i++)
+  {
+    receivedFloats[i] = 0;
+  }
+
+
   Serial.println(F("APRS setup complete"));
 }
 
 void receiveEvent(int howMany) {
   while (howMany >= 5) {  // Expect 5 bytes: 1 command byte + 4 bytes for float
-    byte buffer[4];  // Temporary buffer for float data
-    Wire.read();  // Discard the first byte (command byte)
+    byte buffer[4] = {0, 0, 0, 0};
+    Wire.read();     // Discard the first byte (command byte)
 
     // Read the next 4 bytes (float data)
     for (int i = 0; i < 4; i++) {
@@ -74,15 +81,15 @@ void receiveEvent(int howMany) {
 
     // Check if the received float is the end marker
     if (newFloat == END_MARKER) {
-      Serial.println("All 13 floats received successfully:");
-      for (int i = 0; i < 13; i++) {
+      Serial.println("All 14 floats received successfully:");
+      for (int i = 0; i < 14; i++) {
         Serial.print("Float ");
         Serial.print(i + 1);
         Serial.print(": ");
         Serial.println(receivedFloats[i], 6);
       }
       floatCount = 0;  // Reset count for next set of floats
-    } else if (floatCount < 13) {
+    } else if (floatCount < 14) {
       receivedFloats[floatCount] = newFloat;
       floatCount++;  // Increment float count
     }
@@ -109,9 +116,8 @@ void loop() {
 
     // Increment and wrap around message group using modulo
     messageGroup = (messageGroup + 1) % 4;
-  } else {
-    Serial.println("RF Disabled");
   }
+  
 }
 
 int aprs_msg_callback(AX25Msg*) {
@@ -120,18 +126,16 @@ int aprs_msg_callback(AX25Msg*) {
 
 void sendStatus(int group) {
   char status_buff[200] = "";  // Properly initialize the buffer
-  char floatStr[10];  // Temporary buffer to hold each float as a string
+  char floatStr[10];           // Temporary buffer to hold each float as a string
 
   switch (group) {
     case 0:
       // Construct the status buffer for floats 1-4: "T: float1, A: float2, B: float3, S: float4"
       strcat(status_buff, "T:");
-      // dtostrf(receivedFloats[0], 3, 2, floatStr);
       dtostrf(receivedFloats[0] * 9.0 / 5.0 + 32, 3, 2, floatStr);  // Convert °C to °F
       strcat(status_buff, floatStr);
 
       strcat(status_buff, " A:");
-      // dtostrf(receivedFloats[1], 3, 2, floatStr);
       dtostrf(receivedFloats[1] * 3.28084, 3, 2, floatStr);  // Convert meters to feet
       strcat(status_buff, floatStr);
 
@@ -178,17 +182,18 @@ void sendStatus(int group) {
       strcat(status_buff, floatStr);
       break;
 
-
     case 3:
-      // Construct the status buffer for floats 12-13: "MaxV: float12, LV: float13"
+      // Construct the status buffer for floats 12-14: "MaxV: float12, LV: float13, LG: float14"
       strcat(status_buff, "MaxV:");
-      // dtostrf(receivedFloats[11], 3, 2, floatStr);
       dtostrf(receivedFloats[11] * 3.28084, 3, 2, floatStr);  // Convert m/s to fps
       strcat(status_buff, floatStr);
 
       strcat(status_buff, " LV:");
-      // dtostrf(receivedFloats[12], 3, 2, floatStr);
       dtostrf(receivedFloats[12] * 3.28084, 3, 2, floatStr);  // Convert m/s to fps
+      strcat(status_buff, floatStr);
+
+      strcat(status_buff, " LG:");
+      dtostrf(receivedFloats[13], 3, 2, floatStr);  // Keep this as m/s
       strcat(status_buff, floatStr);
       break;
   }
