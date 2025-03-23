@@ -253,7 +253,7 @@ def survivability_process(shared_data, survivability_percentage):
             if initialAltitudeAchieved.value and altitude < landingAltitudeThreshold and not terminate_recording and not DRI_calculated:
                 # Record data
                 Time.append(time.perf_counter())
-                Accel.append(acceleration) # Z-Axis Acceleration
+                Accel.append(acceleration) # X-Axis Acceleration
 
                 # Stop recording after landing detected
                 
@@ -328,7 +328,7 @@ def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_
         shared_data[6] = imu.currentData.a_z
         '''
         if initialAltitudeAchieved.value and abs(shared_imu_data[4]) > landing_accel:
-            landing_accel = abs(shared_imu_data[4])
+            landing_accel = abs(shared_imu_data[4]) # Need to be x_axis
             shared_rf_data[13] = landing_accel  # Landing acceleration
         
         # Update RF data based on shared IMU data and other shared values
