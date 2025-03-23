@@ -20,17 +20,17 @@ PRINT_MODE = True
 PRINT_FREQUENCY = 10
 
 # Threshold values (Flight Use)
-# landingAccMagThreshold = 30  # m/s^2 30
-# groundLevel = 203.54 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-# initialAltitudeThreshold = groundLevel + 35 # This need to be larger
-# landingAltitudeThreshold = groundLevel + 30
+landingAccMagThreshold = 40  # m/s^2 30
+groundLevel = 150 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+initialAltitudeThreshold = groundLevel + 35 # This need to be larger
+landingAltitudeThreshold = groundLevel + 30
 
-# # Timeout tracking variables (Flight Use)
-# LOW_ALTITUDE_TIMEOUT = 60 # Default to 60
-# RF_TIMEOUT = 280 # Default about 300s = 5 Min
-# SERVO_WAIT_TIME = 15 # Default 15s
-# LOGGER_TIMEOUT = 180
-# LOGGER_BUFFER = 12000 # 2 minutes x 60 seconds/min x 100 Hz
+# Timeout tracking variables (Flight Use)
+LOW_ALTITUDE_TIMEOUT = 60 # Default to 60
+RF_TIMEOUT = 280 # Default about 300s = 5 Min
+SERVO_WAIT_TIME = 15 # Default 15s
+LOGGER_TIMEOUT = 180
+LOGGER_BUFFER = 12000 # 2 minutes x 60 seconds/min x 100 Hz
 
 # Temperature Offser
 tOffset = -10.11
@@ -38,17 +38,17 @@ tOffset = -10.11
 ###############################################################################
 
 # Test Use
-landingAccMagThreshold = 10000 # m/s^2
-groundLevel = 151 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-initialAltitudeThreshold = groundLevel - 40 
-landingAltitudeThreshold = groundLevel + 30
+# landingAccMagThreshold = 50 # m/s^2
+# groundLevel = 150 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+# initialAltitudeThreshold = groundLevel - 40 
+# landingAltitudeThreshold = groundLevel + 30
 
-# Timeout tracking variables
-LOW_ALTITUDE_TIMEOUT = 5 # Default to 60
-RF_TIMEOUT = 120 # Default 300s = 5 Min
-SERVO_WAIT_TIME = 15 # Default 10s
-LOGGER_TIMEOUT = 20
-LOGGER_BUFFER = 3000 # 2 minutes x 60 seconds/min x 100 Hz
+# # Timeout tracking variables
+# LOW_ALTITUDE_TIMEOUT = 5 # Default to 60
+# RF_TIMEOUT = 120 # Default 300s = 5 Min
+# SERVO_WAIT_TIME = 15 # Default 10s
+# LOGGER_TIMEOUT = 20
+# LOGGER_BUFFER = 2000 # 2 minutes x 60 seconds/min x 100 Hz
 
 ###############################################################################
 # INVARIANTS
@@ -65,7 +65,7 @@ processes = []
 
 # Shared data structure for IMU data (using Array for faster access)
 shared_imu_data = multiprocessing.Array(ctypes.c_double, 11)  # Array for Q_w, Q_x, Q_y, Q_z, a_x, a_y, a_z, temperature, pressure, altitude, accel_magnitude
-shared_rf_data = multiprocessing.Array(ctypes.c_double, 13) # temperature, apogee, battry_percentage, survivability_percentage, Q_w, Q_x, Q_y, Q_z, detection_time_H, detection_time_M, detection_time_S, max_velocity, landing_velocity
+shared_rf_data = multiprocessing.Array(ctypes.c_double, 14) # temperature, apogee, battry_percentage, survivability_percentage, Q_w, Q_x, Q_y, Q_z, detection_time_H, detection_time_M, detection_time_S, max_velocity, landing_velocity, landing_acceleration
 
 # Shared values for landing detection and survivability
 landing_detected = multiprocessing.Value(ctypes.c_bool, False)  # Boolean for landing detection
@@ -297,6 +297,7 @@ def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_
     landed_velocity_set = False
     landing_velocity.value = 0
     max_velocity.value = 0
+    landing_accel = 0
     start_time = time.perf_counter()
     velocity_ready_flag = False
 
@@ -316,6 +317,19 @@ def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_
 
         if velocity_ready_flag and abs(current_velocity.value) >= abs(max_velocity.value):
             max_velocity.value = abs(current_velocity.value)
+
+
+        '''
+        f"{shared_imu_data[4]:.2f},"         # 6  a_x
+        f"{shared_imu_data[5]:.2f},"         # 7  a_y
+        f"{shared_imu_data[6]:.2f},"         # 8  a_z
+        shared_data[4] = imu.currentData.a_x
+        shared_data[5] = imu.currentData.a_y
+        shared_data[6] = imu.currentData.a_z
+        '''
+        if initialAltitudeAchieved.value and abs(shared_imu_data[4]) > landing_accel:
+            landing_accel = abs(shared_imu_data[4])
+            shared_rf_data[13] = landing_accel  # Landing acceleration
         
         # Update RF data based on shared IMU data and other shared values
         shared_rf_data[0] = shared_imu_data[7]  # Temperature from IMU data
