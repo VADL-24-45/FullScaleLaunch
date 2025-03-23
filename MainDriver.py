@@ -240,7 +240,7 @@ def survivability_process(shared_data, survivability_percentage):
             # shared_data[5] = imu.currentData.a_y
             # shared_data[6] = imu.currentData.a_z       
             altitude = shared_data[9]
-            acceleration = shared_data[6]
+            acceleration = shared_data[4]
 
             if landedState.value and not landing_time_set:
                 landing_time = time.perf_counter()
