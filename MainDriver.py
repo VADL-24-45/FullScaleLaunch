@@ -12,45 +12,31 @@ from collections import deque
 import signal
 import sys
 from Battery import ADS1115
-import numpy as np
 from scipy.interpolate import interp1d
 from DRI import DRI
 
 PRINT_MODE = True
 PRINT_FREQUENCY = 10
 
-# # Threshold values (Flight Use)
-# landingAccMagThreshold = 40  # m/s^2 30
-# groundLevel = 130 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-# initialAltitudeThreshold = groundLevel + 20 # This need to be larger
-# landingAltitudeThreshold = groundLevel + 15
+######################################################################################
+# New constants (all in seconds or meters)
+GROUND_LEVEL = 130
+LAUNCH_THRESHOLD = GROUND_LEVEL + 100 # Default (300)
+LAUNCH_DURATION = 2.0 # Default (2)
+FREEZE_PERIOD = 10 # Default (50)
+LOW_ALT_THRESHOLD = GROUND_LEVEL + 20 # Default (20)
+MIN_STABLE_DURATION = 5.0 # Default (5)
+RF_FAILSAFE_DURATION = 180 # Default (180s)
+RF_OFF_TIMEOUT = 180 # Default (180) CHECK THIS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-# # Timeout tracking variables (Flight Use)
-# LOW_ALTITUDE_TIMEOUT = 60 # Default to 60
-# RF_TIMEOUT = 280 # Default about 300s = 5 Min
-# SERVO_WAIT_TIME = 15 # Default 15s
-# LOGGER_TIMEOUT = 180
-# LOGGER_BUFFER = 12000 # 2 minutes x 60 seconds/min x 100 Hz
+SERVO_RF_WAIT_TIME = 15 # Default 15s
+LOGGER_TIMEOUT = 120
+LOGGER_BUFFER = 18000 # 3 minutes x 60 seconds/min x 100 Hz
+######################################################################################
 
 # Temperature Offser
 tOffset = -10.11
 
-###############################################################################
-
-# Test Use
-landingAccMagThreshold = 100000 # m/s^2
-groundLevel = 194 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-initialAltitudeThreshold = groundLevel - 100 # Normally -40
-landingAltitudeThreshold = groundLevel + 100 # Normally +30
-
-# Timeout tracking variables
-LOW_ALTITUDE_TIMEOUT = 20 # Default to 60
-RF_TIMEOUT = 116 # Default 300s = 5 Min
-SERVO_WAIT_TIME = 15 # Default 10s
-LOGGER_TIMEOUT = 20
-LOGGER_BUFFER = 2000 # 2 minutes x 60 seconds/min x 100 Hz
-
-###############################################################################
 # INVARIANTS
 
 # Servo Angle
@@ -65,26 +51,25 @@ processes = []
 
 # Shared data structure for IMU data (using Array for faster access)
 shared_imu_data = multiprocessing.Array(ctypes.c_double, 11)  # Array for Q_w, Q_x, Q_y, Q_z, a_x, a_y, a_z, temperature, pressure, altitude, accel_magnitude
-shared_rf_data = multiprocessing.Array(ctypes.c_double, 14) # temperature, apogee, battry_percentage, survivability_percentage, Q_w, Q_x, Q_y, Q_z, detection_time_H, detection_time_M, detection_time_S, max_velocity, landing_velocity, landing_acceleration
+shared_rf_data = multiprocessing.Array(ctypes.c_double, 14) # temperature, apogee, battery_percentage, survivability_percentage, Q_w, Q_x, Q_y, Q_z, detection_time_H, detection_time_M, detection_time_S, max_velocity, landing_velocity, landing_acceleration
 
 # Shared values for landing detection and survivability
-landing_detected = multiprocessing.Value(ctypes.c_bool, False)  # Boolean for landing detection
 landing_detection_time = multiprocessing.Value(ctypes.c_double, 0.0)  # Time of landing detection
 survivability_percentage = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for survivability percentage
 current_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  
 # Shared values for velocity
 max_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for max velocity
 landing_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for landing velocity
-velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for current velocity
 
 apogee_reached = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for apogee
-battry_percentage = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for battry percentage
+battery_percentage = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for battry percentage
 
 # State flags
 ledState = multiprocessing.Value(ctypes.c_bool, False)  # LED state flag
 landedState = multiprocessing.Value(ctypes.c_bool, False)  # Landed state flag
 initialAltitudeAchieved = multiprocessing.Value(ctypes.c_bool, False)  # Initial altitude achieved flag
 stop_requested = multiprocessing.Value(ctypes.c_bool, False) # Global Process Stop Flag
+detachParachute = multiprocessing.Value(ctypes.c_bool, False) # Global Process Parashute Detachment Flag
 
 sender = None
 imu = None
@@ -121,8 +106,8 @@ def imu_data_process(imu, shared_data):
             # print(shared_data[8])
 
             # Update apogee if the current altitude is higher than the recorded apogee
-            if altitude - groundLevel > apogee_reached.value:
-                apogee_reached.value = altitude - groundLevel
+            if altitude - GROUND_LEVEL > apogee_reached.value:
+                apogee_reached.value = altitude - GROUND_LEVEL
 
             # Calculate acceleration magnitude and update shared data
             accel_magnitude = math.sqrt(shared_data[4] ** 2 + shared_data[5] ** 2 + shared_data[6] ** 2)
@@ -130,79 +115,145 @@ def imu_data_process(imu, shared_data):
 
 
 # TO-DO: Add timeout timer and photoresistor
-def landing_detection_process(shared_data, landing_detected, landing_detection_time):
+def landing_detection_process(shared_data, landedState, landing_detection_time):
     """
-    Process function to monitor IMU data for landing detection condition.
-    Sets landing_detected to True based on altitude and acceleration thresholds.
-    Publishes this condition over ZMQ socket.
+    Process function implementing the new robust decision logic:
+    
+    1. Launch Detection (Altitude > 1000ft / ~304.8m sustained for 3 s)
+       - When detected, set initialAltitudeAchieved and record launch_detection_time.
+    2. Freeze Period (FREEZE_PERIOD seconds after launch detection)
+       - During this period, ignore low-altitude logic.
+    3. Low Altitude Tracking (Altitude < 70ft / ~21.3 m)
+       - After freeze, if altitude is below the threshold, update min_altitude
+         only if a new lower value is found. Any violation (altitude above threshold)
+         resets the stored min_altitude to +inf.
+    4. Landed Detection
+       - If no new minimum is recorded for MIN_STABLE_DURATION seconds,
+         set landedState to True.
+    5. RF Fail-Safe
+       - If RF_FAILSAFE_DURATION seconds have passed since launch detection
+         without landing, force landedState.
     """
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN) 
 
+    FREEZE_START_DEBUG = False
+    FREEZE_END_DEBUG = False
+    LOW_ALT_DEBUG = False
+    LD_PRINT_DEBUG = True
 
-    # Set up ZMQ publisher
-    # context = zmq.Context()
-    # socket = context.socket(zmq.PUB)
-    # socket.bind("tcp://*:5556")
-    timer_set = False
+    # Timers and state for launch detection
+    launch_timer = None
+    launch_detection_time = None
     landed_time_set = False
 
-    initial_altitude_logged = False
-    landing_logged = False    
+    # Variables for low altitude tracking
+    min_altitude = float("inf")
+    min_alt_timer = None
 
+    # Main Logic Starts Here
     while True:
         if stop_requested.value:
             break    
 
-        # Use calculated altitude and acceleration magnitude from shared data
-        accel_magnitude = shared_data[10]
-        altitude = shared_data[9]
+        current_time = time.perf_counter() # Get current time
+        altitude = shared_data[9] # Get current altitude
+        
+        # --- (1) Launch Detection ---
+        if not initialAltitudeAchieved.value:
+            if altitude > LAUNCH_THRESHOLD: # > Launch Threshold
+                if launch_timer is None:
+                    launch_timer = current_time # Set timer
+                    if LD_PRINT_DEBUG: 
+                        print(f"DEBUG: Above launch threshold ({LAUNCH_THRESHOLD}m). Starting launch timer...")
 
-        # Check if initial altitude threshold is achieved
-        if altitude > initialAltitudeThreshold:
-            initialAltitudeAchieved.value = True
-
-        # Update landed state if conditions are met
-        if initialAltitudeAchieved.value and altitude < landingAltitudeThreshold and accel_magnitude > landingAccMagThreshold:
-            landedState.value = True
-            landing_detected.value = True
-
-            # Record the system time of landing detection
-            if not landed_time_set:
-                landing_detection_time.value = time.time()
-                landed_time_set = True
-
-            # Publish landing detected message
-            # socket.send_string("Landing Detected")
-
-        if initialAltitudeAchieved.value and altitude < landingAltitudeThreshold:
-                
-            if not timer_set:    
-                timeout_start_time = time.perf_counter()  # Start the timer 
-                timer_set = True
-
-            # print(f"{(time.perf_counter() - timeout_start_time):.2f}")
-
-            if time.perf_counter() - timeout_start_time >= LOW_ALTITUDE_TIMEOUT:
-                # Landing conditions are met
-                landedState.value = True
-                landing_detected.value = True
+                elif (current_time - launch_timer) >= LAUNCH_DURATION: # Time Check Pass
+                    initialAltitudeAchieved.value = True # High Altitude Achieved
+                    launch_detection_time = current_time # Record Time of High Altitude Achieve
+                    if LD_PRINT_DEBUG:
+                        print(f"DEBUG: Launch detected at t={current_time:.2f}s (Altitude: {altitude:.2f} m)")
+            else:
+                if launch_timer is not None:
+                    if LD_PRINT_DEBUG:
+                        print(f"DEBUG: Launch timer reset (Altitude dropped to {altitude:.2f} m)")
+                launch_timer = None
+        
+        # --- (RF FAIL-SAFE) ---
+        if initialAltitudeAchieved.value and (launch_detection_time is not None) and not landedState.value:
+            if (current_time - launch_detection_time) >= RF_FAILSAFE_DURATION: # Timer for RF Timeout
+                landedState.value = True  # Only set RF
                 if not landed_time_set:
                     landing_detection_time.value = time.time()
                     landed_time_set = True
-                # socket.send_string("Landing Detected")
-                # print("Landing Detected!")
-    
+                print("DEBUG: RF Fail-safe triggered: Forcing landed state due to timeout.")
+        
+        # --- (2) Freeze Period ---
+        if initialAltitudeAchieved.value and launch_detection_time is not None:
+            if (current_time - launch_detection_time) < FREEZE_PERIOD: # Freeze Period
+                
+                #############################DEBUG################################
+                if not FREEZE_START_DEBUG and LD_PRINT_DEBUG:
+                    print("DEBUG: Start freeze period")
+                    FREEZE_START_DEBUG = True
+                ###################################################################
 
-        if initialAltitudeAchieved.value and not initial_altitude_logged:
-            print(f"Initial Altitude Achieved at {time.perf_counter():.2f} seconds")
-            initial_altitude_logged = True
+                # During freeze period, ignore low altitude changes; reset min altitude tracking.
+                if min_altitude != float("inf"):
+                    if LD_PRINT_DEBUG:
+                        print("DEBUG: In freeze period. Resetting low-altitude tracking.")
+                min_altitude = float("inf")
+                min_alt_timer = None
+            else:
+                #############################DEBUG################################
+                if not FREEZE_END_DEBUG and LD_PRINT_DEBUG:
+                    print("DEBUG: End freeze period")
+                    FREEZE_END_DEBUG = True
+                ##################################################################
 
-        if landing_detected.value and not landing_logged:
-            print(f"Landing Detected at {time.perf_counter():.2f} seconds")
-            landing_logged = True
+                # --- (3) Low Altitude Tracking ---
+                if altitude < LOW_ALT_THRESHOLD:
+                    #############################DEBUG################################
+                    if not LOW_ALT_DEBUG:
+                        if LD_PRINT_DEBUG:
+                            print("DEBUG: Low altitude detected")
+                        LOW_ALT_DEBUG = True
+                    ##################################################################
+                   
+                    # Altitude is below threshold: update minimum if lower value found.
+                    if altitude - 1 < min_altitude: # Norse Margin of 1 m
+                        min_altitude = altitude # Update new minimum
+                        min_alt_timer = current_time # Re-start Timer
+                        if LD_PRINT_DEBUG:
+                            print(f"DEBUG: New minimum altitude recorded: {min_altitude:.2f} m at t={current_time:.2f}s")
+                    else:
+                        # No new lower reading; do nothing.
+                        pass
+                    
+                else:
+                    # Altitude violation: above threshold. Reset low altitude tracking.
+                    if min_altitude != float("inf"):
+                        if LD_PRINT_DEBUG:
+                            print(f"DEBUG: Altitude violation (Altitude: {altitude:.2f} m) - resetting min altitude.")
+                    min_altitude = float("inf") # Set minimum to infinity at violation
+                    min_alt_timer = None
+                
+                # --- (4) Landed Detection ---
+                if min_alt_timer is not None:
+                    stable_duration = current_time - min_alt_timer
+                    if LD_PRINT_DEBUG:
+                        print(f"DEBUG: Stable duration at low altitude: {stable_duration:.2f} s")
+                    if stable_duration >= MIN_STABLE_DURATION and not landedState.value:
+                        landedState.value = True
+                        if not landed_time_set:
+                            landing_detection_time.value = time.time()
+                            landed_time_set = True
+                        if LD_PRINT_DEBUG:
+                            print(f"DEBUG: Landed state detected after stable low altitude of {MIN_STABLE_DURATION} s.")
+        
+        # --- (5) Detach & RF trigger ---
+        if landedState.value:
+            detachParachute.value = True
 
-         
 def survivability_process(shared_data, survivability_percentage):
     """
     Process function to calculate and update the survivability percentage.
@@ -250,7 +301,7 @@ def survivability_process(shared_data, survivability_percentage):
                 terminate_recording = True
 
             # State 1: Recording Before Landing on Falling
-            if initialAltitudeAchieved.value and altitude < landingAltitudeThreshold and not terminate_recording and not DRI_calculated:
+            if initialAltitudeAchieved.value and altitude < LOW_ALT_THRESHOLD and not terminate_recording and not DRI_calculated:
                 # Record data
                 Time.append(time.perf_counter())
                 Accel.append(acceleration) # X-Axis Acceleration
@@ -286,7 +337,7 @@ def survivability_process(shared_data, survivability_percentage):
         survivability_percentage.value = DR_val    
 
 
-def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_time, shared_rf_data, apogee_reached, battry_percentage, survivability_percentage, max_velocity, landing_velocity):
+def update_rf_data_process(shared_imu_data, landedState, landing_detection_time, shared_rf_data, apogee_reached, battery_percentage, survivability_percentage, max_velocity, landing_velocity):
     """
     Process function to update shared_rf_data continuously until landing is detected.
     """
@@ -307,7 +358,7 @@ def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_
 
         shared_rf_data[12] = landing_velocity.value  # Landing velocity
         # Update Landing velocity
-        if landing_detected.value and not landed_velocity_set:
+        if landedState.value and not landed_velocity_set:
             landing_velocity.value = abs(current_velocity.value)
             landed_velocity_set = True
 
@@ -334,14 +385,14 @@ def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_
         # Update RF data based on shared IMU data and other shared values
         shared_rf_data[0] = shared_imu_data[7]  # Temperature from IMU data
         shared_rf_data[1] = apogee_reached.value  # Apogee reached
-        shared_rf_data[2] = battry_percentage.value  # Battery percentage
+        shared_rf_data[2] = battery_percentage.value  # Battery percentage
         shared_rf_data[3] = survivability_percentage.value  # Survivability percentage
 
         # Update velocity data
         shared_rf_data[11] = max_velocity.value  # Max velocity
         
         # Set landing time only once after landing is detected
-        if landing_detected.value and not landed_time_set:
+        if landedState.value and not landed_time_set:
             detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value))
             hours, minutes, seconds = map(int, detection_time.split(':'))
             shared_rf_data[8] = hours  # Detection time hours
@@ -356,7 +407,7 @@ def update_rf_data_process(shared_imu_data, landing_detected, landing_detection_
         shared_rf_data[6] = shared_imu_data[2]  # Q_y (quaternion y)
         shared_rf_data[7] = shared_imu_data[3]  # Q_z (quaternion z)
 
-def send_rf_data_process(shared_rf_data, landing_detected):
+def send_rf_data_process(shared_rf_data, landedState):
     """
     Process function to send RF data when landing is detected.
     """
@@ -374,7 +425,7 @@ def send_rf_data_process(shared_rf_data, landing_detected):
         sender.monitor_and_send(rf_data)
         time.sleep(0.5)
 
-def release_latch_servo(servo, landing_detected):
+def release_latch_servo(servo, landedState):
     """
     Process function to release the latch and servo when landing is detected.
     """
@@ -387,34 +438,34 @@ def release_latch_servo(servo, landing_detected):
         if stop_requested.value:
             break
 
-        if landing_detected.value and not action_triggered:
+        if detachParachute.value and not action_triggered:
             action_triggered = True  # Set the flag
-            # servo.set_servo_angle(servoEndAngle)  # Servo
             lgpio.gpio_write(GPIO_ENABLE, 19, 1)  # Latch
-            # print("RF Enabled")
-            # Wait for 5 minutes (300 seconds) and turn off RF
-            start_time = time.perf_counter()
+
+        if landedState.value:
+            start_time = time.perf_counter() # Begin Timer
             servo_moved = False
 
             while True:
                 if stop_requested.value:
-                            break
+                    break
 
                 current_time = time.perf_counter()            
                 
-                if current_time - start_time >= SERVO_WAIT_TIME and not servo_moved:
+                if current_time - start_time >= SERVO_RF_WAIT_TIME and not servo_moved:
                     servo.set_servo_angle(servoEndAngle) # Extend Antenna
                     lgpio.gpio_write(GPIO_ENABLE, 17, 1)  # RF
                     servo_moved = True
 
-                if current_time - start_time >= RF_TIMEOUT:
+                if current_time - start_time >= RF_OFF_TIMEOUT:
                     lgpio.gpio_write(GPIO_ENABLE, 17, 0)  # Turn off RF
                     # print("RF Disabled")
                     break
+
             break  # Stop the process after releasing the latch and servo
 
 
-def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved):
+def data_logging_process(shared_imu_data, shared_rf_data, apogee_reached, current_velocity, landedState, initialAltitudeAchieved):
     """
     Logging process with launch detection (based on initialAltitudeAchieved) and post-landing timeout.
     Logs pre-launch data (2-minute rolling buffer at 100 Hz) and post-launch data into separate files, then combines them with column headers.
@@ -486,7 +537,7 @@ def data_logging_process(shared_imu_data, shared_rf_data, landing_detected, apog
                     post_f.write(data_str)
                     post_f.flush()
 
-                if landing_detected.value and landing_event_time is None:
+                if landedState.value and landing_event_time is None:
                     landing_event_time = current_time
                     print("Landing detected. Starting post-landing timeout.")
 
@@ -519,7 +570,7 @@ def combine_files(pre_file, post_file, output_file):
             with open(post_file, "r") as post_f:
                 out_f.write(post_f.read())
 
-def update_velocity_process(shared_imu_data, landing_detected):
+def update_velocity_process(shared_imu_data, landedState):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     
@@ -573,7 +624,7 @@ def update_velocity_process(shared_imu_data, landing_detected):
             # Reset the time step
             start_time = current_time
 
-def update_battery_process(battry_percentage):
+def update_battery_process(battery_percentage):
     # Ignore SIGINT and SIGTERM in this process
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -594,7 +645,7 @@ def update_battery_process(battry_percentage):
             if battery_percentage_local <= lowest_battery_percent:
                 lowest_battery_percent = battery_percentage_local
 
-            battry_percentage.value = lowest_battery_percent
+            battery_percentage.value = lowest_battery_percent
             start_time = current_time
 
 
@@ -660,19 +711,19 @@ if __name__ == "__main__":
     # Start processes and store in global list
     processes.extend([
         multiprocessing.Process(target=imu_data_process, args=(imu, shared_imu_data)),
-        multiprocessing.Process(target=landing_detection_process, args=(shared_imu_data, landing_detected, landing_detection_time)),
+        multiprocessing.Process(target=landing_detection_process, args=(shared_imu_data, landedState, landing_detection_time)),
         multiprocessing.Process(target=survivability_process, args=(shared_imu_data, survivability_percentage)),
         multiprocessing.Process(target=update_rf_data_process, args=(
-            shared_imu_data, landing_detected, landing_detection_time, shared_rf_data,
-            apogee_reached, battry_percentage, survivability_percentage, max_velocity, landing_velocity
+            shared_imu_data, landedState, landing_detection_time, shared_rf_data,
+            apogee_reached, battery_percentage, survivability_percentage, max_velocity, landing_velocity
         )),
-        multiprocessing.Process(target=send_rf_data_process, args=(shared_rf_data, landing_detected)),
+        multiprocessing.Process(target=send_rf_data_process, args=(shared_rf_data, landedState)),
         multiprocessing.Process(target=data_logging_process, args=(
-            shared_imu_data, shared_rf_data, landing_detected, apogee_reached, current_velocity, landedState, initialAltitudeAchieved
+            shared_imu_data, shared_rf_data, apogee_reached, current_velocity, landedState, initialAltitudeAchieved
         )),
-        multiprocessing.Process(target=release_latch_servo, args=(servo, landing_detected,)),
-        multiprocessing.Process(target=update_velocity_process, args=(shared_imu_data, landing_detected,)),
-        multiprocessing.Process(target=update_battery_process, args=(battry_percentage,))
+        multiprocessing.Process(target=release_latch_servo, args=(servo, landedState,)),
+        multiprocessing.Process(target=update_velocity_process, args=(shared_imu_data, landedState,)),
+        multiprocessing.Process(target=update_battery_process, args=(battery_percentage,))
     ])
 
     # Start all processes
@@ -694,14 +745,14 @@ if __name__ == "__main__":
             current_time = time.perf_counter()
             if current_time - start_time >= interval and PRINT_MODE:
                 # Print Ver 1
-                detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landing_detected.value else "N/A"
+                detection_time = time.strftime('%H:%M:%S', time.localtime(landing_detection_time.value)) if landedState.value else "N/A"
                 print(
                     f"Alt: {shared_imu_data[9]:.2f} m, "
                     f"Acc Mag: {shared_imu_data[10]:.2f} m/s^2, "
                     f"Qw: {shared_imu_data[0]:.2f}, "
                     f"Launch: {initialAltitudeAchieved.value}, "
-                    f"Land: {landing_detected.value}, "
-                    f"Bat: {battry_percentage.value:.2f}%, "
+                    f"Land: {landedState.value}, "
+                    f"Bat: {battery_percentage.value:.2f}%, "
                     f"Temp: {shared_rf_data[0]:.2f}C, "
                     f"Time: {detection_time}"
                 )
