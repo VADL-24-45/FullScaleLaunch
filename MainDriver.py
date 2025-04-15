@@ -15,7 +15,7 @@ from Battery import ADS1115
 from scipy.interpolate import interp1d
 from DRI import DRI
 
-PRINT_MODE = True
+PRINT_MODE = False
 PRINT_FREQUENCY = 10
 
 ######################################################################################
@@ -60,6 +60,7 @@ current_velocity = multiprocessing.Value(ctypes.c_double, 0.0)
 # Shared values for velocity
 max_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for max velocity
 landing_velocity = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for landing velocity
+landing_acceleration = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for landing acceleration
 
 apogee_reached = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for apogee
 battery_percentage = multiprocessing.Value(ctypes.c_double, 0.0)  # Double for battry percentage
@@ -221,7 +222,7 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
                    
                     # Altitude is below threshold: update minimum if lower value found.
                     if altitude - 1 < min_altitude: # Norse Margin of 1 m
-                        min_altitude = altitude # Update new minimum
+                        min_altitude = altitude - 1 # Update new minimum
                         min_alt_timer = current_time # Re-start Timer
                         if LD_PRINT_DEBUG:
                             print(f"DEBUG: New minimum altitude recorded: {min_altitude:.2f} m at t={current_time:.2f}s")
@@ -254,87 +255,72 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
         if landedState.value:
             detachParachute.value = True
 
-def survivability_process(shared_data, survivability_percentage):
-    """
-    Process function to calculate and update the survivability percentage.
-    """
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
+def survivability_process(shared_data,
+                          current_velocity,
+                          landing_velocity,
+                          landing_acceleration,
+                          survivability_percentage):
+    signal.signal(signal.SIGINT,  signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
-    target_frequency = 100  # Hz
-    interval = 1 / target_frequency  # 10 ms
-    start_time = time.perf_counter()
-    last_logging_time = start_time
-    landing_time = time.perf_counter()
-    time_wait_DRI = 10
-    terminate_recording = False
-    landing_time_set = False
+    target_frequency = 100
+    interval         = 1 / target_frequency
+    buffer_len       = int(target_frequency * 15)   # 15 s
 
-    omega_n = 52.9 # natural frequency rad/s
-    zeta    = 0.224 # damping ratio
-    DRI_calculated = False
-    DR_val = 0
+    omega_n, zeta = 52.9, 0.224
+    dri_done      = False
+    DR_val        = 0.0
 
-    Time = deque()
-    Accel = deque()
-    DRI_calculator = DRI()
+    time_buf  = deque(maxlen=buffer_len)
+    accel_buf = deque(maxlen=buffer_len)
+    vel_buf   = deque(maxlen=buffer_len)
+
+    last_tick = time.perf_counter()
 
     while True:
         if stop_requested.value:
-            break
+            return
 
-        # 100 Hz Loop
-        current_time = time.perf_counter() 
-        if current_time - last_logging_time >= interval:
-            # Select Axis Here
-            # shared_data[4] = imu.currentData.a_x
-            # shared_data[5] = imu.currentData.a_y
-            # shared_data[6] = imu.currentData.a_z       
-            altitude = shared_data[9]
-            acceleration = shared_data[4]
+        now = time.perf_counter()
+        if now - last_tick >= interval:
+            last_tick = now
 
-            if landedState.value and not landing_time_set:
-                landing_time = time.perf_counter()
-                landing_time_set = True
-            
-            if landedState.value and current_time - landing_time > time_wait_DRI:
-                terminate_recording = True
+            # collect data until landing detected
+            if not landedState.value and not dri_done:
+                time_buf.append(now)
+                accel_buf.append(shared_data[4])     # a_x
+                vel_buf.append(abs(current_velocity.value))
 
-            # State 1: Recording Before Landing on Falling
-            if initialAltitudeAchieved.value and altitude < LOW_ALT_THRESHOLD and not terminate_recording and not DRI_calculated:
-                # Record data
-                Time.append(time.perf_counter())
-                Accel.append(acceleration) # X-Axis Acceleration
+            else:
+                # After Landing
+                if not dri_done and len(accel_buf) >= 2:
+                    t_arr = np.array(time_buf)
+                    a_arr = np.array(accel_buf)
+                    v_arr = np.array(vel_buf)
 
-                # Stop recording after landing detected
-                
-            # State 2: Calculating DRIs and Survivability Data
-            elif terminate_recording and not DRI_calculated:
-                if len(Time) > 2: # Prevent Failure
-                    reconstructed_time = np.linspace(Time[0], Time[-1], len(Time))
-                    f_linear = interp1d(Time, Accel, kind='linear', fill_value="extrapolate")
-                    cropped_accelX_resampled = f_linear(reconstructed_time)
+                    # landing accel / vel
+                    idx_peak = int(np.argmax(np.abs(a_arr)))
+                    landing_acceleration.value = float(a_arr[idx_peak])
+                    landing_velocity.value     = float(v_arr[idx_peak])
 
-                    DR_arr = DRI_calculator.calc_DRI(reconstructed_time, cropped_accelX_resampled, omega_n, zeta)
+                    # DRI
+                    t_uniform = np.linspace(t_arr[0], t_arr[-1], len(t_arr))
+                    a_uniform = interp1d(t_arr, a_arr, kind='linear',
+                                         fill_value="extrapolate")(t_uniform)
+                    DR_arr = DRI().calc_DRI(t_uniform, a_uniform,
+                                            omega_n, zeta)
+                    DR_val = float(np.max(np.abs(DR_arr)))
 
-                    DR_val = np.max(np.abs(DR_arr))
-                
-                    print("DRI value:", DR_val)
+                    dri_done = True
+                    survivability_percentage.value = DR_val
 
-                    # Classification
-                    if DR_val <= 17.7:
-                        print("Low")
-                    elif DR_val <= 21:
-                        print("Medium")
-                    else:
-                        print("High")
+                    if PRINT_MODE:
+                        print(f"[survivability] a={landing_acceleration.value:.2f} "
+                              f"v={landing_velocity.value:.2f} "
+                              f"DRI={DR_val:.2f}")
 
-                DRI_calculated = True
-            
-            # Update time
-            last_logging_time = current_time
+                    return      # stop the subprocess; work is done
 
-        survivability_percentage.value = DR_val    
 
 
 def update_rf_data_process(shared_imu_data, landedState, landing_detection_time, shared_rf_data, apogee_reached, battery_percentage, survivability_percentage, max_velocity, landing_velocity):
@@ -346,9 +332,7 @@ def update_rf_data_process(shared_imu_data, landedState, landing_detection_time,
 
     landed_time_set = False  # Flag to ensure landing time is only set once
     landed_velocity_set = False
-    landing_velocity.value = 0
     max_velocity.value = 0
-    landing_accel = 0
     start_time = time.perf_counter()
     velocity_ready_flag = False
 
@@ -357,10 +341,6 @@ def update_rf_data_process(shared_imu_data, landedState, landing_detection_time,
             break
 
         shared_rf_data[12] = landing_velocity.value  # Landing velocity
-        # Update Landing velocity
-        if landedState.value and not landed_velocity_set:
-            landing_velocity.value = abs(current_velocity.value)
-            landed_velocity_set = True
 
         # Ensure exactly 5 seconds pass before updating Max Velocity
         if not velocity_ready_flag and time.perf_counter() - start_time > 5:
@@ -369,18 +349,7 @@ def update_rf_data_process(shared_imu_data, landedState, landing_detection_time,
         if velocity_ready_flag and abs(current_velocity.value) >= abs(max_velocity.value):
             max_velocity.value = abs(current_velocity.value)
 
-
-        '''
-        f"{shared_imu_data[4]:.2f},"         # 6  a_x
-        f"{shared_imu_data[5]:.2f},"         # 7  a_y
-        f"{shared_imu_data[6]:.2f},"         # 8  a_z
-        shared_data[4] = imu.currentData.a_x
-        shared_data[5] = imu.currentData.a_y
-        shared_data[6] = imu.currentData.a_z
-        '''
-        if initialAltitudeAchieved.value and abs(shared_imu_data[4]) > landing_accel:
-            landing_accel = abs(shared_imu_data[4]) # Need to be x_axis
-            shared_rf_data[13] = landing_accel  # Landing acceleration
+        shared_rf_data[13] = landing_acceleration.value
         
         # Update RF data based on shared IMU data and other shared values
         shared_rf_data[0] = shared_imu_data[7]  # Temperature from IMU data
@@ -712,7 +681,7 @@ if __name__ == "__main__":
     processes.extend([
         multiprocessing.Process(target=imu_data_process, args=(imu, shared_imu_data)),
         multiprocessing.Process(target=landing_detection_process, args=(shared_imu_data, landedState, landing_detection_time)),
-        multiprocessing.Process(target=survivability_process, args=(shared_imu_data, survivability_percentage)),
+        multiprocessing.Process(target=survivability_process, args=(shared_imu_data, current_velocity, landing_velocity, landing_acceleration, survivability_percentage)),
         multiprocessing.Process(target=update_rf_data_process, args=(
             shared_imu_data, landedState, landing_detection_time, shared_rf_data,
             apogee_reached, battery_percentage, survivability_percentage, max_velocity, landing_velocity
