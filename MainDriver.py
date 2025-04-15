@@ -19,18 +19,18 @@ from DRI import DRI
 PRINT_MODE = True
 PRINT_FREQUENCY = 10
 
-# Threshold values (Flight Use)
-landingAccMagThreshold = 40  # m/s^2 30
-groundLevel = 150 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-initialAltitudeThreshold = groundLevel + 35 # This need to be larger
-landingAltitudeThreshold = groundLevel + 30
+# # Threshold values (Flight Use)
+# landingAccMagThreshold = 40  # m/s^2 30
+# groundLevel = 130 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+# initialAltitudeThreshold = groundLevel + 20 # This need to be larger
+# landingAltitudeThreshold = groundLevel + 15
 
-# Timeout tracking variables (Flight Use)
-LOW_ALTITUDE_TIMEOUT = 60 # Default to 60
-RF_TIMEOUT = 280 # Default about 300s = 5 Min
-SERVO_WAIT_TIME = 15 # Default 15s
-LOGGER_TIMEOUT = 180
-LOGGER_BUFFER = 12000 # 2 minutes x 60 seconds/min x 100 Hz
+# # Timeout tracking variables (Flight Use)
+# LOW_ALTITUDE_TIMEOUT = 60 # Default to 60
+# RF_TIMEOUT = 280 # Default about 300s = 5 Min
+# SERVO_WAIT_TIME = 15 # Default 15s
+# LOGGER_TIMEOUT = 180
+# LOGGER_BUFFER = 12000 # 2 minutes x 60 seconds/min x 100 Hz
 
 # Temperature Offser
 tOffset = -10.11
@@ -38,17 +38,17 @@ tOffset = -10.11
 ###############################################################################
 
 # Test Use
-# landingAccMagThreshold = 50 # m/s^2
-# groundLevel = 150 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
-# initialAltitudeThreshold = groundLevel - 40 
-# landingAltitudeThreshold = groundLevel + 30
+landingAccMagThreshold = 100000 # m/s^2
+groundLevel = 194 # CHANGE THIS VALUE TO CALIBRATE IMU 133.34
+initialAltitudeThreshold = groundLevel - 100 # Normally -40
+landingAltitudeThreshold = groundLevel + 100 # Normally +30
 
-# # Timeout tracking variables
-# LOW_ALTITUDE_TIMEOUT = 5 # Default to 60
-# RF_TIMEOUT = 120 # Default 300s = 5 Min
-# SERVO_WAIT_TIME = 15 # Default 10s
-# LOGGER_TIMEOUT = 20
-# LOGGER_BUFFER = 2000 # 2 minutes x 60 seconds/min x 100 Hz
+# Timeout tracking variables
+LOW_ALTITUDE_TIMEOUT = 20 # Default to 60
+RF_TIMEOUT = 116 # Default 300s = 5 Min
+SERVO_WAIT_TIME = 15 # Default 10s
+LOGGER_TIMEOUT = 20
+LOGGER_BUFFER = 2000 # 2 minutes x 60 seconds/min x 100 Hz
 
 ###############################################################################
 # INVARIANTS
