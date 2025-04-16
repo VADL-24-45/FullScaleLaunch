@@ -21,7 +21,7 @@ PRINT_FREQUENCY = 10
 ######################################################################################
 # New constants (all in seconds or meters)
 GROUND_LEVEL = 120
-LAUNCH_THRESHOLD = GROUND_LEVEL - 100 # Default (300)
+LAUNCH_THRESHOLD = GROUND_LEVEL + 200 # Default (300)
 LAUNCH_DURATION = 2.0 # Default (2)
 FREEZE_PERIOD = 10 # Default (50)
 LOW_ALT_THRESHOLD = GROUND_LEVEL + 20 # Default (20)
@@ -263,7 +263,7 @@ def survivability_process(shared_data,
 
     target_frequency = 100
     interval         = 1 / target_frequency
-    buffer_len       = int(target_frequency * 15)   # 15 s
+    buffer_len       = int(target_frequency * 20)   # 15 s
 
     omega_n, zeta = 52.9, 0.224
     dri_done      = False
@@ -303,6 +303,7 @@ def survivability_process(shared_data,
                     # peak speed
                     vel_idx = int(np.argmax(np.abs(v_arr)))
                     landing_velocity.value     = float(v_arr[vel_idx])
+
 
                     # DRI
                     t_uniform = np.linspace(t_arr[0], t_arr[-1], len(t_arr))
