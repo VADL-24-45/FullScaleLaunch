@@ -20,8 +20,8 @@ PRINT_FREQUENCY = 10
 
 ######################################################################################
 # New constants (all in seconds or meters)
-GROUND_LEVEL = 130
-LAUNCH_THRESHOLD = GROUND_LEVEL + 100 # Default (300)
+GROUND_LEVEL = 120
+LAUNCH_THRESHOLD = GROUND_LEVEL - 100 # Default (300)
 LAUNCH_DURATION = 2.0 # Default (2)
 FREEZE_PERIOD = 10 # Default (50)
 LOW_ALT_THRESHOLD = GROUND_LEVEL + 20 # Default (20)
@@ -245,15 +245,13 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
                         print(f"DEBUG: Stable duration at low altitude: {stable_duration:.2f} s")
                     if stable_duration >= MIN_STABLE_DURATION and not landedState.value:
                         landedState.value = True
+                        detachParachute.value = True
                         if not landed_time_set:
                             landing_detection_time.value = time.time()
                             landed_time_set = True
                         if LD_PRINT_DEBUG:
                             print(f"DEBUG: Landed state detected after stable low altitude of {MIN_STABLE_DURATION} s.")
         
-        # --- (5) Detach & RF trigger ---
-        if landedState.value:
-            detachParachute.value = True
 
 def survivability_process(shared_data,
                           current_velocity,
@@ -298,10 +296,13 @@ def survivability_process(shared_data,
                     a_arr = np.array(accel_buf)
                     v_arr = np.array(vel_buf)
 
-                    # landing accel / vel
-                    idx_peak = int(np.argmax(np.abs(a_arr)))
-                    landing_acceleration.value = float(a_arr[idx_peak])
-                    landing_velocity.value     = float(v_arr[idx_peak])
+                    # peak deceleration
+                    acc_idx = int(np.argmax(np.abs(a_arr)))
+                    landing_acceleration.value = float(a_arr[acc_idx])
+
+                    # peak speed
+                    vel_idx = int(np.argmax(np.abs(v_arr)))
+                    landing_velocity.value     = float(v_arr[vel_idx])
 
                     # DRI
                     t_uniform = np.linspace(t_arr[0], t_arr[-1], len(t_arr))
