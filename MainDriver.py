@@ -20,10 +20,10 @@ PRINT_FREQUENCY = 10
 
 ######################################################################################
 # New constants (all in seconds or meters)
-GROUND_LEVEL = 120
-LAUNCH_THRESHOLD = GROUND_LEVEL + 200 # Default (300)
+GROUND_LEVEL = 159
+LAUNCH_THRESHOLD = GROUND_LEVEL + 300 # Default (300)
 LAUNCH_DURATION = 2.0 # Default (2)
-FREEZE_PERIOD = 10 # Default (50)
+FREEZE_PERIOD = 50 # Default (50)
 LOW_ALT_THRESHOLD = GROUND_LEVEL + 20 # Default (20)
 MIN_STABLE_DURATION = 5.0 # Default (5)
 RF_FAILSAFE_DURATION = 180 # Default (180s)
