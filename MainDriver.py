@@ -20,14 +20,15 @@ PRINT_FREQUENCY = 10
 
 ######################################################################################
 # New constants (all in seconds or meters)
-GROUND_LEVEL = 159
-LAUNCH_THRESHOLD = GROUND_LEVEL + 300 # Default (300)
+GROUND_LEVEL = 120
+LAUNCH_THRESHOLD = GROUND_LEVEL + 100 # Default (300)
 LAUNCH_DURATION = 2.0 # Default (2)
-FREEZE_PERIOD = 50 # Default (50)
+FREEZE_PERIOD = 20 # Default (50)
 LOW_ALT_THRESHOLD = GROUND_LEVEL + 20 # Default (20)
-MIN_STABLE_DURATION = 5.0 # Default (5)
-RF_FAILSAFE_DURATION = 180 # Default (180s)
-RF_OFF_TIMEOUT = 180 # Default (180) CHECK THIS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+MIN_STABLE_DURATION = 6.0 # Default (10)
+RF_FAILSAFE_DURATION = 150 # Default (180s)
+RF_OFF_TIMEOUT = 180 # Default (180)
+LANDING_ACCEL_THRESHOLD = 40
 
 SERVO_RF_WAIT_TIME = 15 # Default 15s
 LOGGER_TIMEOUT = 120
@@ -114,8 +115,6 @@ def imu_data_process(imu, shared_data):
             accel_magnitude = math.sqrt(shared_data[4] ** 2 + shared_data[5] ** 2 + shared_data[6] ** 2)
             shared_data[10] = accel_magnitude
 
-
-# TO-DO: Add timeout timer and photoresistor
 def landing_detection_process(shared_data, landedState, landing_detection_time):
     """
     Process function implementing the new robust decision logic:
@@ -150,6 +149,7 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
 
     # Variables for low altitude tracking
     min_altitude = float("inf")
+    max_acceleration_after_low = - float("inf")
     min_alt_timer = None
 
     # Main Logic Starts Here
@@ -159,6 +159,7 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
 
         current_time = time.perf_counter() # Get current time
         altitude = shared_data[9] # Get current altitude
+        acceleration = abs(shared_data[10]) # Get current acceleration
         
         # --- (1) Launch Detection ---
         if not initialAltitudeAchieved.value:
@@ -183,6 +184,7 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
         if initialAltitudeAchieved.value and (launch_detection_time is not None) and not landedState.value:
             if (current_time - launch_detection_time) >= RF_FAILSAFE_DURATION: # Timer for RF Timeout
                 landedState.value = True  # Only set RF
+                detachParachute.value = True # Now also set detatchment
                 if not landed_time_set:
                     landing_detection_time.value = time.time()
                     landed_time_set = True
@@ -203,6 +205,7 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
                     if LD_PRINT_DEBUG:
                         print("DEBUG: In freeze period. Resetting low-altitude tracking.")
                 min_altitude = float("inf")
+                max_acceleration_after_low = - float("inf")
                 min_alt_timer = None
             else:
                 #############################DEBUG################################
@@ -213,6 +216,8 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
 
                 # --- (3) Low Altitude Tracking ---
                 if altitude < LOW_ALT_THRESHOLD:
+
+                    max_acceleration_after_low = max(max_acceleration_after_low, acceleration)
                     #############################DEBUG################################
                     if not LOW_ALT_DEBUG:
                         if LD_PRINT_DEBUG:
@@ -237,21 +242,25 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
                             print(f"DEBUG: Altitude violation (Altitude: {altitude:.2f} m) - resetting min altitude.")
                     min_altitude = float("inf") # Set minimum to infinity at violation
                     min_alt_timer = None
+                    max_acceleration_after_low = - float("inf")
+
+
                 
                 # --- (4) Landed Detection ---
                 if min_alt_timer is not None:
                     stable_duration = current_time - min_alt_timer
                     if LD_PRINT_DEBUG:
                         print(f"DEBUG: Stable duration at low altitude: {stable_duration:.2f} s")
-                    if stable_duration >= MIN_STABLE_DURATION and not landedState.value:
+                    if stable_duration >= MIN_STABLE_DURATION and max_acceleration_after_low > LANDING_ACCEL_THRESHOLD and not landedState.value:
                         landedState.value = True
                         detachParachute.value = True
                         if not landed_time_set:
                             landing_detection_time.value = time.time()
                             landed_time_set = True
-                        if LD_PRINT_DEBUG:
+                        if LD_PRINT_DEBUG and landedState.value:
                             print(f"DEBUG: Landed state detected after stable low altitude of {MIN_STABLE_DURATION} s.")
-        
+                            return
+
 
 def survivability_process(shared_data,
                           current_velocity,
@@ -263,7 +272,7 @@ def survivability_process(shared_data,
 
     target_frequency = 100
     interval         = 1 / target_frequency
-    buffer_len       = int(target_frequency * 20)   # 15 s
+    buffer_len       = int(target_frequency * (MIN_STABLE_DURATION + 30))   # -15 s
 
     omega_n, zeta = 52.9, 0.224
     dri_done      = False
