@@ -21,14 +21,14 @@ PRINT_FREQUENCY = 10
 ######################################################################################
 # New constants (all in seconds or meters)
 GROUND_LEVEL = 120
-LAUNCH_THRESHOLD = GROUND_LEVEL + 100 # Default (300)
+LAUNCH_THRESHOLD = GROUND_LEVEL - 300 # Default (300)
 LAUNCH_DURATION = 2.0 # Default (2)
-FREEZE_PERIOD = 20 # Default (50)
+FREEZE_PERIOD = 40 # Default (40)
 LOW_ALT_THRESHOLD = GROUND_LEVEL + 20 # Default (20)
-MIN_STABLE_DURATION = 6.0 # Default (10)
-RF_FAILSAFE_DURATION = 150 # Default (180s)
+MIN_STABLE_DURATION = 5.0 # Default (5)
+RF_FAILSAFE_DURATION = 150 # Default (150s)
 RF_OFF_TIMEOUT = 180 # Default (180)
-LANDING_ACCEL_THRESHOLD = 40
+LANDING_ACCEL_THRESHOLD = 1000000 # Default (40)
 
 SERVO_RF_WAIT_TIME = 15 # Default 15s
 LOGGER_TIMEOUT = 120
@@ -72,6 +72,7 @@ landedState = multiprocessing.Value(ctypes.c_bool, False)  # Landed state flag
 initialAltitudeAchieved = multiprocessing.Value(ctypes.c_bool, False)  # Initial altitude achieved flag
 stop_requested = multiprocessing.Value(ctypes.c_bool, False) # Global Process Stop Flag
 detachParachute = multiprocessing.Value(ctypes.c_bool, False) # Global Process Parashute Detachment Flag
+postLandingDataCollection = multiprocessing.Value(ctypes.c_bool, False) # Global Flag to control pose data computation
 
 sender = None
 imu = None
@@ -115,7 +116,7 @@ def imu_data_process(imu, shared_data):
             accel_magnitude = math.sqrt(shared_data[4] ** 2 + shared_data[5] ** 2 + shared_data[6] ** 2)
             shared_data[10] = accel_magnitude
 
-def landing_detection_process(shared_data, landedState, landing_detection_time):
+def landing_detection_process(shared_data, landedState, landing_detection_time, postLandingDataCollection):
     """
     Process function implementing the new robust decision logic:
     
@@ -141,6 +142,7 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
     FREEZE_END_DEBUG = False
     LOW_ALT_DEBUG = False
     LD_PRINT_DEBUG = True
+    DATA_PRINT_DEBUG = False
 
     # Timers and state for launch detection
     launch_timer = None
@@ -249,8 +251,16 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
                 # --- (4) Landed Detection ---
                 if min_alt_timer is not None:
                     stable_duration = current_time - min_alt_timer
-                    if LD_PRINT_DEBUG:
-                        print(f"DEBUG: Stable duration at low altitude: {stable_duration:.2f} s")
+                    # if LD_PRINT_DEBUG:
+                    #     print(f"DEBUG: Stable duration at low altitude: {stable_duration:.2f} s")
+                    if stable_duration >= MIN_STABLE_DURATION:
+                        postLandingDataCollection.value = True # For data
+                        #############DEBUG#############################
+                        if LD_PRINT_DEBUG and not DATA_PRINT_DEBUG:
+                            print("RF Data Collected.")
+                            DATA_PRINT_DEBUG = True
+                        ###############################################
+                        
                     if stable_duration >= MIN_STABLE_DURATION and max_acceleration_after_low > LANDING_ACCEL_THRESHOLD and not landedState.value:
                         landedState.value = True
                         detachParachute.value = True
@@ -259,20 +269,21 @@ def landing_detection_process(shared_data, landedState, landing_detection_time):
                             landed_time_set = True
                         if LD_PRINT_DEBUG and landedState.value:
                             print(f"DEBUG: Landed state detected after stable low altitude of {MIN_STABLE_DURATION} s.")
-                            return
+                        return
 
 
 def survivability_process(shared_data,
                           current_velocity,
                           landing_velocity,
                           landing_acceleration,
-                          survivability_percentage):
+                          survivability_percentage,
+                          postLandingDataCollection):
     signal.signal(signal.SIGINT,  signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
     target_frequency = 100
     interval         = 1 / target_frequency
-    buffer_len       = int(target_frequency * (MIN_STABLE_DURATION + 30))   # -15 s
+    buffer_len       = int(target_frequency * (MIN_STABLE_DURATION + 15))   # +15 s = 20s
 
     omega_n, zeta = 52.9, 0.224
     dri_done      = False
@@ -293,7 +304,7 @@ def survivability_process(shared_data,
             last_tick = now
 
             # collect data until landing detected
-            if not landedState.value and not dri_done:
+            if not postLandingDataCollection.value and not dri_done: # Save snapshot
                 time_buf.append(now)
                 accel_buf.append(shared_data[4])     # a_x
                 vel_buf.append(abs(current_velocity.value))
@@ -691,8 +702,8 @@ if __name__ == "__main__":
     # Start processes and store in global list
     processes.extend([
         multiprocessing.Process(target=imu_data_process, args=(imu, shared_imu_data)),
-        multiprocessing.Process(target=landing_detection_process, args=(shared_imu_data, landedState, landing_detection_time)),
-        multiprocessing.Process(target=survivability_process, args=(shared_imu_data, current_velocity, landing_velocity, landing_acceleration, survivability_percentage)),
+        multiprocessing.Process(target=landing_detection_process, args=(shared_imu_data, landedState, landing_detection_time, postLandingDataCollection)),
+        multiprocessing.Process(target=survivability_process, args=(shared_imu_data, current_velocity, landing_velocity, landing_acceleration, survivability_percentage, postLandingDataCollection)),
         multiprocessing.Process(target=update_rf_data_process, args=(
             shared_imu_data, landedState, landing_detection_time, shared_rf_data,
             apogee_reached, battery_percentage, survivability_percentage, max_velocity, landing_velocity
