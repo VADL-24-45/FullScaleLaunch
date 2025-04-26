@@ -20,15 +20,15 @@ PRINT_FREQUENCY = 10
 
 ######################################################################################
 # New constants (all in seconds or meters)
-GROUND_LEVEL = 120
+GROUND_LEVEL = 145
 LAUNCH_THRESHOLD = GROUND_LEVEL - 300 # Default (300)
 LAUNCH_DURATION = 2.0 # Default (2)
-FREEZE_PERIOD = 40 # Default (40)
+FREEZE_PERIOD = 0 # Default (40)
 LOW_ALT_THRESHOLD = GROUND_LEVEL + 20 # Default (20)
 MIN_STABLE_DURATION = 5.0 # Default (5)
 RF_FAILSAFE_DURATION = 150 # Default (150s)
 RF_OFF_TIMEOUT = 180 # Default (180)
-LANDING_ACCEL_THRESHOLD = 1000000 # Default (40)
+LANDING_ACCEL_THRESHOLD = 5 # Default (40)
 
 SERVO_RF_WAIT_TIME = 15 # Default 15s
 LOGGER_TIMEOUT = 120
@@ -71,7 +71,6 @@ ledState = multiprocessing.Value(ctypes.c_bool, False)  # LED state flag
 landedState = multiprocessing.Value(ctypes.c_bool, False)  # Landed state flag
 initialAltitudeAchieved = multiprocessing.Value(ctypes.c_bool, False)  # Initial altitude achieved flag
 stop_requested = multiprocessing.Value(ctypes.c_bool, False) # Global Process Stop Flag
-detachParachute = multiprocessing.Value(ctypes.c_bool, False) # Global Process Parashute Detachment Flag
 postLandingDataCollection = multiprocessing.Value(ctypes.c_bool, False) # Global Flag to control pose data computation
 
 sender = None
@@ -186,7 +185,6 @@ def landing_detection_process(shared_data, landedState, landing_detection_time, 
         if initialAltitudeAchieved.value and (launch_detection_time is not None) and not landedState.value:
             if (current_time - launch_detection_time) >= RF_FAILSAFE_DURATION: # Timer for RF Timeout
                 landedState.value = True  # Only set RF
-                detachParachute.value = True # Now also set detatchment
                 if not landed_time_set:
                     landing_detection_time.value = time.time()
                     landed_time_set = True
@@ -263,7 +261,7 @@ def landing_detection_process(shared_data, landedState, landing_detection_time, 
                         
                     if stable_duration >= MIN_STABLE_DURATION and max_acceleration_after_low > LANDING_ACCEL_THRESHOLD and not landedState.value:
                         landedState.value = True
-                        detachParachute.value = True
+                        
                         if not landed_time_set:
                             landing_detection_time.value = time.time()
                             landed_time_set = True
@@ -423,14 +421,21 @@ def release_latch_servo(servo, landedState):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
+    GPIO_ENABLE = lgpio.gpiochip_open(0)
+    lgpio.gpio_claim_output(GPIO_ENABLE, 17)
+    lgpio.gpio_claim_output(GPIO_ENABLE, 19)
+    lgpio.gpio_write(GPIO_ENABLE, 17, 0)
+    lgpio.gpio_write(GPIO_ENABLE, 19, 0)
+
     action_triggered = False  # Flag to ensure action happens only once
 
     while True:
         if stop_requested.value:
             break
 
-        if detachParachute.value and not action_triggered:
+        if landedState.value and not action_triggered:
             action_triggered = True  # Set the flag
+            print("DEBUG: Detach Parachute")
             lgpio.gpio_write(GPIO_ENABLE, 19, 1)  # Latch
 
         if landedState.value:
@@ -453,6 +458,9 @@ def release_latch_servo(servo, landedState):
                     # print("RF Disabled")
                     break
 
+            lgpio.gpio_write(GPIO_ENABLE, 17, 0)
+            lgpio.gpio_write(GPIO_ENABLE, 19, 0)
+            lgpio.gpiochip_close(GPIO_ENABLE)
             break  # Stop the process after releasing the latch and servo
 
 
@@ -660,10 +668,6 @@ def cleanup():
     for p in processes:
         p.join()
 
-    # GPIO Cleanup
-    lgpio.gpio_write(GPIO_ENABLE, 17, 0)
-    lgpio.gpio_write(GPIO_ENABLE, 19, 0)
-    lgpio.gpiochip_close(GPIO_ENABLE)
     servo.release()
 
     print("Processes stopped. GPIO cleanup done.")
@@ -673,27 +677,6 @@ if __name__ == "__main__":
     # Initialize the IMU
     imu = VN100IMU()
     sender = I2CSender()
-
-    # Initialize ENABLE
-    GPIO_ENABLE = lgpio.gpiochip_open(0)  # Open GPIO chip 0
-    try:
-        lgpio.gpio_claim_output(GPIO_ENABLE, 17)  # Set GPIO 17 as ENABLE
-    except lgpio.error as e:
-        if "GPIO busy" in str(e):
-            print("GPIO 17 is busy, releasing and reinitializing...")
-            lgpio.gpio_free(GPIO_ENABLE, 17)  # Free GPIO 17 if busy
-            lgpio.gpio_claim_output(GPIO_ENABLE, 17)  # Set GPIO 17 as output again
-
-    try:
-        lgpio.gpio_claim_output(GPIO_ENABLE, 19)  # Set GPIO 19 as LATCH
-    except lgpio.error as e:
-        if "GPIO busy" in str(e):
-            print("GPIO 19 is busy, releasing and reinitializing...")
-            lgpio.gpio_free(GPIO_ENABLE, 19)  # Free GPIO 19 if busy
-            lgpio.gpio_claim_output(GPIO_ENABLE, 19)  # Set GPIO 19 as output again
-
-    lgpio.gpio_write(GPIO_ENABLE, 17, 0)  # Disable RF
-    lgpio.gpio_write(GPIO_ENABLE, 19, 0)  # Disable LATCH
 
     # Initialize Servo
     servo = ServoController(servo_pin=13)
